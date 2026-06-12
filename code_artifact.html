@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WEIMETA 赛博手势重力场与粒子流体交互系统</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000000;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        /* 隐藏摄像头画面，只作后台数据处理 */
+        #webcam {
+            transform: scaleX(-1);
+            position: absolute;
+            width: 140px;
+            height: 105px;
+            bottom: 24px;
+            right: 24px;
+            border-radius: 12px;
+            border: 1px solid rgba(0, 240, 255, 0.3);
+            box-shadow: 0 0 20px rgba(0, 240, 255, 0.15);
+            opacity: 0.8;
+            z-index: 50;
+            object-fit: cover;
+            display: none;
+            transition: all 0.3s ease;
+        }
+        /* 滚动条与基础交互微调 */
+        input[type="range"]::-webkit-slider-thumb {
+            box-shadow: 0 0 10px rgba(6, 182, 212, 0.8);
+        }
+        #memory-popup {
+            opacity: 0;
+            transform: translate3d(28px, 12px, 0) scale(0.92);
+            filter: blur(10px);
+            transition: opacity 0.35s ease, transform 0.55s cubic-bezier(0.16, 1, 0.3, 1), filter 0.45s ease;
+        }
+        #memory-popup.is-visible {
+            opacity: 1;
+            transform: translate3d(0, 0, 0) scale(1);
+            filter: blur(0);
+        }
+        #memory-popup.is-visible .memory-scan {
+            animation: memory-scan 1.8s ease-out both;
+        }
+        @keyframes memory-scan {
+            0% { transform: translateY(-120%); opacity: 0; }
+            20% { opacity: 0.85; }
+            100% { transform: translateY(520%); opacity: 0; }
+        }
+    </style>
+</head>
+<body class="select-none text-white font-mono">
+
+    <!-- WebGL Canvas 容器 -->
+    <div id="canvas-container" class="absolute inset-0 w-full h-full z-10"></div>
+
+    <!-- UI 层 -->
+    <div class="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between p-6 md:p-8">
+        
+        <!-- 头部：系统信息 & 顶部悬浮胶囊 HUD (绝不遮挡中心) -->
+        <header class="w-full flex flex-col md:flex-row justify-between items-center gap-4 pointer-events-auto">
+            <div class="w-full md:w-auto">
+                <h1 class="text-lg font-black tracking-widest text-cyan-400 flex items-center gap-2">
+                    <span class="inline-block w-2.5 h-2.5 bg-cyan-400 animate-pulse rounded-full"></span>
+                    WEIMETA QUANTUM FLUID
+                </h1>
+                <p class="text-[10px] text-gray-500 mt-0.5 uppercase tracking-wider">Gesture Particle Hologram System v2.6</p>
+            </div>
+            
+            <!-- 胶囊 HUD 状态指示器 (悬浮、不遮挡粒子) -->
+            <div id="gesture-indicator-box" class="bg-black/40 backdrop-blur-md border border-cyan-500/20 px-5 py-2.5 rounded-full flex items-center gap-3 transition-all duration-300 scale-95 opacity-0 shadow-[0_0_20px_rgba(0,240,255,0.05)]">
+                <span id="gesture-icon" class="text-xl">🌀</span>
+                <div class="flex flex-col">
+                    <span id="gesture-title" class="text-xs font-black tracking-widest text-cyan-400 leading-tight">--</span>
+                    <span id="gesture-desc" class="text-[9px] text-gray-400 tracking-wider leading-none">初始化中...</span>
+                </div>
+            </div>
+
+            <div class="hidden md:flex bg-black/30 backdrop-blur-md border border-white/5 px-4 py-2 rounded-xl text-right text-[10px] gap-4">
+                <div>
+                    <p class="text-gray-500">SYSTEM FPS</p>
+                    <p id="fps-counter" class="text-green-400 font-bold text-xs mt-0.5">--</p>
+                </div>
+                <div class="border-l border-white/10 pl-4">
+                    <p class="text-gray-500">HAND STATUS</p>
+                    <p id="hand-status" class="text-red-400 font-bold text-xs mt-0.5">NO DETECTED</p>
+                </div>
+            </div>
+        </header>
+
+        <!-- 摄像头预览图层 -->
+        <video id="webcam" autoplay playsinline></video>
+
+        <!-- 底部大改版：清爽的仪表盘交互控制台 (状态联动亮起) -->
+        <footer class="w-full flex flex-col gap-4 pointer-events-auto mt-auto">
+            
+            <!-- 联动卡片组 (清晰直观，绝不换行堆叠) -->
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 w-full">
+                <!-- 状态 0 卡片 -->
+                <div id="state-card-0" class="state-card bg-black/40 backdrop-blur-md border border-white/5 p-2.5 rounded-xl flex items-center gap-3 transition-all duration-300">
+                    <span class="text-xl">✊</span>
+                    <div class="leading-tight">
+                        <p class="text-xs font-bold text-gray-400 font-mono card-title">0. 握拳</p>
+                        <p class="text-[9px] text-gray-500">引力坍缩漩涡</p>
+                    </div>
+                </div>
+                <!-- 状态 1 卡片 -->
+                <div id="state-card-1" class="state-card bg-black/40 backdrop-blur-md border border-white/5 p-2.5 rounded-xl flex items-center gap-3 transition-all duration-300">
+                    <span class="text-xl">☝️</span>
+                    <div class="leading-tight">
+                        <p class="text-xs font-bold text-gray-400 font-mono card-title">1. 食指</p>
+                        <p class="text-[9px] text-gray-500">液态重组数字 1</p>
+                    </div>
+                </div>
+                <!-- 状态 2 卡片 -->
+                <div id="state-card-2" class="state-card bg-black/40 backdrop-blur-md border border-white/5 p-2.5 rounded-xl flex items-center gap-3 transition-all duration-300">
+                    <span class="text-xl">✌️</span>
+                    <div class="leading-tight">
+                        <p class="text-xs font-bold text-gray-400 font-mono card-title">2. 双指</p>
+                        <p class="text-[9px] text-gray-500">液态重组数字 2</p>
+                    </div>
+                </div>
+                <!-- 状态 3 卡片 -->
+                <div id="state-card-3" class="state-card bg-black/40 backdrop-blur-md border border-white/5 p-2.5 rounded-xl flex items-center gap-3 transition-all duration-300">
+                    <span class="text-xl">🤟</span>
+                    <div class="leading-tight">
+                        <p class="text-xs font-bold text-gray-400 font-mono card-title">3. 三指</p>
+                        <p class="text-[9px] text-gray-500">液态重组数字 3</p>
+                    </div>
+                </div>
+                <!-- 状态 4 卡片 -->
+                <div id="state-card-4" class="state-card bg-black/40 backdrop-blur-md border border-white/5 p-2.5 rounded-xl flex items-center gap-3 transition-all duration-300">
+                    <span class="text-xl">🖖</span>
+                    <div class="leading-tight">
+                        <p class="text-xs font-bold text-gray-400 font-mono card-title">4. 四指</p>
+                        <p class="text-[9px] text-gray-500">WEIMETA 极光蓝</p>
+                    </div>
+                </div>
+                <!-- 状态 5 卡片 -->
+                <div id="state-card-5" class="state-card bg-black/40 backdrop-blur-md border border-white/5 p-2.5 rounded-xl flex items-center gap-3 transition-all duration-300">
+                    <span class="text-xl">🖐️</span>
+                    <div class="leading-tight">
+                        <p class="text-xs font-bold text-gray-400 font-mono card-title">5. 五指</p>
+                        <p class="text-[9px] text-gray-500">星云大爆炸喷发</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 控制底栏：参数调节 & 摄像头开关 -->
+            <div class="flex flex-col lg:flex-row justify-between items-center gap-3 bg-black/20 backdrop-blur-sm border border-white/5 p-3 rounded-xl w-full">
+                <div class="flex items-center gap-3 text-[10px] text-gray-400">
+                    <span class="flex items-center gap-1.5"><span class="w-1.5 h-1.5 bg-cyan-400 rounded-full"></span>GPU Particles: 75,000</span>
+                    <span class="text-gray-600">|</span>
+                    <button id="toggle-cam-btn" class="text-cyan-400 hover:text-cyan-300 transition-colors uppercase tracking-widest font-bold">打开/关闭预览窗</button>
+                </div>
+
+                <!-- 噪声滑块 & 调试模拟按钮 -->
+                <div class="flex flex-wrap items-center gap-4 w-full lg:w-auto justify-end">
+                    <div class="flex items-center gap-2 bg-black/30 border border-white/5 px-3 py-1.5 rounded-lg w-full sm:w-48">
+                        <span class="text-[9px] text-gray-500 uppercase">Noise:</span>
+                        <input id="noise-slider" type="range" min="0" max="3" step="0.1" value="1.2" class="flex-1 accent-cyan-400 bg-gray-800 h-1 rounded-lg cursor-pointer">
+                        <span id="noise-val" class="text-[10px] text-cyan-400 font-bold w-6 text-right">1.2</span>
+                    </div>
+                    <button id="btn-next-state" class="w-full sm:w-auto bg-gradient-to-r from-blue-600/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-400 text-white font-bold py-2 px-4 rounded-lg text-[10px] tracking-widest transition-all shadow-[0_0_15px_rgba(0,240,255,0.15)] uppercase">
+                        手动模拟手势状态
+                    </button>
+                </div>
+            </div>
+        </footer>
+
+    </div>
+
+    <!-- 五指爆发时出现的记忆卡片 -->
+    <aside id="memory-popup" class="absolute z-30 top-28 right-6 md:right-8 w-[min(330px,calc(100vw-3rem))] pointer-events-none">
+        <div class="relative overflow-hidden rounded-2xl border border-cyan-300/30 bg-black/75 backdrop-blur-xl p-5 shadow-[0_0_45px_rgba(0,240,255,0.18)]">
+            <div class="memory-scan absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-transparent via-cyan-300/25 to-transparent"></div>
+            <div class="flex items-center justify-between gap-4">
+                <span class="text-[9px] font-black tracking-[0.28em] text-cyan-300">MEMORY POPUP</span>
+                <span class="h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_12px_#00f0ff]"></span>
+            </div>
+            <p class="mt-4 text-xl font-black tracking-[0.18em] text-white">WEIMETA</p>
+            <p class="mt-2 text-[10px] leading-relaxed tracking-wider text-cyan-100/60">记忆粒子已释放。色彩、速度与手掌坐标正在写入本次宇宙快照。</p>
+            <div class="mt-4 h-px bg-gradient-to-r from-cyan-300/70 via-blue-500/30 to-transparent"></div>
+            <p id="memory-stamp" class="mt-3 text-[9px] tracking-[0.2em] text-blue-300/60">SNAPSHOT 0000</p>
+        </div>
+    </aside>
+
+    <!-- 权限加载遮罩层 -->
+    <div id="loading-mask" class="absolute inset-0 z-50 bg-black flex flex-col items-center justify-center p-4">
+        <div class="relative w-20 h-20 mb-6">
+            <div class="absolute inset-0 border-2 border-cyan-500/10 rounded-full"></div>
+            <div class="absolute inset-0 border-2 border-t-cyan-400 rounded-full animate-spin"></div>
+        </div>
+        <h2 class="text-lg font-bold tracking-widest text-cyan-400 font-mono animate-pulse">WEIMETA QUANTUM FLUID</h2>
+        <p id="mask-status" class="text-[10px] text-gray-500 mt-2 font-mono max-w-sm text-center">正在配置高性能 WebGL 渲染管线与计算机视觉流...</p>
+        <button id="start-btn" class="hidden mt-8 px-8 py-3 bg-cyan-500 hover:bg-cyan-400 text-black font-black font-mono text-xs tracking-widest rounded-full transition-all transform hover:scale-105 shadow-[0_0_20px_rgba(0,240,255,0.3)]">
+            启动系统与摄像头
+        </button>
+        <button id="manual-start-btn" class="hidden mt-3 px-6 py-2 text-cyan-300/70 hover:text-cyan-200 font-bold font-mono text-[10px] tracking-widest transition-colors">
+            暂不使用摄像头，进入手动模式
+        </button>
+    </div>
+
+    <!-- 异常状态弹窗提示 -->
+    <div id="error-dialog" class="hidden absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 bg-red-950/80 border border-red-500/30 p-6 rounded-2xl max-w-sm w-11/12 text-center backdrop-blur-md">
+        <div class="text-3xl mb-2">⚠️</div>
+        <h3 class="text-sm font-bold text-red-400 font-mono">摄像头启用失败 / 权限拒绝</h3>
+        <p id="error-desc" class="text-[11px] text-gray-300 mt-2 leading-relaxed">系统未能访问您的摄像头。本应用依旧可以在“手动模拟手势状态”交互下满载流畅运行！</p>
+        <button id="close-error-btn" class="mt-4 px-6 py-2 bg-red-500/80 hover:bg-red-400 text-white text-[10px] font-bold font-mono rounded-lg">
+            使用手动模式体验
+        </button>
+    </div>
+
+    <!-- ==================== 依赖注入（CDN 稳定链接） ==================== -->
+    <!-- 引入 Three.js 主库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- 引入 Postprocessing (EffectComposer, RenderPass, ShaderPass, UnrealBloomPass) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <!-- 依赖着色器（已修复 CDN 名称） -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+
+    <!-- 引入 MediaPipe 视觉库 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <!-- ==================== 核心逻辑开发：VERTEX & FRAGMENT SHADER ==================== -->
+    <script>
+        // 极致优化后的 GLSL Vertex & Fragment 着色器，致力于提供精细的拉丝烟雾质感
+
+        const PARTICLE_VERTEX_SHADER = `
+            uniform float uTime;
+            uniform float uProgress;
+            uniform float uNoiseStrength;
+            uniform float uState; // 0: 黑洞吸引, 1-3: 数字, 4: WEIMETA文字, 5: 爆炸
+            uniform vec3 uHandPos; // 实时手部3D位置
+            uniform float uHandActive;
+            uniform float uStateAge;
+            uniform vec3 uExplosionCenter;
+
+            attribute vec3 aTargetPosition;
+            attribute vec3 aExplosionDirection;
+            attribute float aSize;
+            attribute float aRandomSpeed;
+            attribute float aColorSeed;
+            attribute float aTextRole;
+
+            varying vec3 vWorldPosition;
+            varying float vDensity;
+            varying float vState;
+            varying float vSpeed;
+            varying float vCore;
+            varying float vColorSeed;
+            varying float vTextRole;
+
+            // --- 经典 3D Simplex 噪声与 Curl 噪声算法 ---
+            vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);}
+            vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}
+
+            float snoise(vec3 v){
+                const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;
+                const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);
+
+                vec3 i  = floor(v + dot(v, C.yyy) );
+                vec3 x0 =   v - i + dot(i, C.xxx) ;
+
+                vec3 g = step(x0.yzx, x0.xyz);
+                vec3 l = 1.0 - g;
+                vec3 i1 = min( g.xyz, l.zxy );
+                vec3 i2 = max( g.xyz, l.zxy );
+
+                vec3 x1 = x0 - i1 + 1.0 * C.xxx;
+                vec3 x2 = x0 - i2 + 2.0 * C.xxx;
+                vec3 x3 = x0 - D.yyy;
+
+                i = mod(i, 289.0 );
+                vec4 p = permute( permute( permute(
+                            i.z + vec4(0.0, i1.z, i2.z, 1.0) )
+                        + i.y + vec4(0.0, i1.y, i2.y, 1.0) )
+                        + i.x + vec4(0.0, i1.x, i2.x, 1.0) );
+
+                float n_ = 0.142857142857;
+                vec3  ns = n_ * D.wyz - D.xzx;
+
+                vec4 j = p - 49.0 * floor(p * ns.z);
+
+                vec4 x_ = floor(j * ns.z);
+                vec4 y_ = floor(j - 7.0 * x_ );
+
+                vec4 x = x_ *ns.x + ns.yyyy;
+                vec4 y = y_ *ns.x + ns.yyyy;
+                vec4 h = 1.0 - abs(x) - abs(y);
+
+                vec4 b0 = vec4( x.xy, y.xy );
+                vec4 b1 = vec4( x.zw, y.zw );
+
+                vec4 s0 = floor(b0)*2.0 + 1.0;
+                vec4 s1 = floor(b1)*2.0 + 1.0;
+                vec4 sh = -step(h, vec4(0.0));
+
+                vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+                vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+
+                vec3 p0 = vec3(a0.xy,h.x);
+                vec3 p1 = vec3(a0.zw,h.y);
+                vec3 p2 = vec3(a1.xy,h.z);
+                vec3 p3 = vec3(a1.zw,h.w);
+
+                vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+                p0 *= norm.x;
+                p1 *= norm.y;
+                p2 *= norm.z;
+                p3 *= norm.w;
+
+                vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+                m = m * m;
+                return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1),
+                                                dot(p2,x2), dot(p3,x3) ) );
+            }
+
+            vec3 snoiseVec3( vec3 x ){
+                float s  = snoise(vec3( x ));
+                float s1 = snoise(vec3( x.y - 19.1, x.z + 33.4, x.x + 5.2 ));
+                float s2 = snoise(vec3( x.z + 74.2, x.x - 124.5, x.y + 99.4 ));
+                vec3 c = vec3( s, s1, s2 );
+                return c;
+            }
+
+            vec3 curlNoise( vec3 p ){
+                const float e = .1;
+                vec3 dx = vec3( e, 0.0, 0.0 );
+                vec3 dy = vec3( 0.0, e, 0.0 );
+                vec3 dz = vec3( 0.0, 0.0, e );
+
+                vec3 p_x0 = snoiseVec3( p - dx );
+                vec3 p_x1 = snoiseVec3( p + dx );
+                vec3 p_y0 = snoiseVec3( p - dy );
+                vec3 p_y1 = snoiseVec3( p + dy );
+                vec3 p_z0 = snoiseVec3( p - dz );
+                vec3 p_z1 = snoiseVec3( p + dz );
+
+                float x = p_y1.z - p_y0.z - p_z1.y + p_z0.y;
+                float y = p_z1.x - p_z0.x - p_x1.z + p_x0.z;
+                float z = p_x1.y - p_x0.y - p_y1.x + p_y0.x;
+
+                const float divisor = 1.0 / ( 2.0 * e );
+                return normalize( vec3( x, y, z ) * divisor );
+            }
+
+            float cubicInOut(float t) {
+                return t < 0.5 ? 4.0 * t * t * t : 1.0 - pow(-2.0 * t + 2.0, 3.0) / 2.0;
+            }
+
+            void main() {
+                vState = uState;
+                vColorSeed = aColorSeed;
+                vTextRole = aTextRole;
+                
+                float easeProgress = cubicInOut(uProgress);
+                vec3 basePos = mix(position, aTargetPosition, easeProgress);
+                vec3 noiseOffset = vec3(0.0);
+                vSpeed = 0.0;
+                vCore = 0.0;
+                
+                if (uState == 0.0) {
+                    // ✊ 状态 0: 屏幕中心的三维同心银河
+                    float radius = length(basePos.xz);
+                    float angle = uTime * (0.24 + aRandomSpeed * 0.16) + radius * 0.018;
+                    mat2 galaxyRotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
+                    basePos.xz = galaxyRotation * basePos.xz;
+                    basePos.y += sin(radius * 0.22 - uTime * 1.1 + aColorSeed * 6.2831) * 1.6;
+                    noiseOffset = curlNoise(basePos * 0.05 + vec3(0.0, uTime * 0.12, 0.0)) * (1.1 + uNoiseStrength);
+                    vSpeed = length(noiseOffset) + radius * 0.018;
+                    vCore = 1.0 - smoothstep(2.0, 19.0, length(basePos));
+                } 
+                else if (uState == 5.0) {
+                    // 🖐️ 状态 5: 指数阻尼的彩色斥力爆发，速度随时间平滑衰减
+                    float age = max(uStateAge, 0.0);
+                    float drag = mix(0.62, 1.18, aColorSeed);
+                    float impulse = mix(48.0, 112.0, fract(aRandomSpeed * 0.73 + aColorSeed));
+                    float travel = impulse * (1.0 - exp(-drag * age)) / drag;
+                    float velocity = impulse * exp(-drag * age);
+                    vec3 dir = normalize(aExplosionDirection);
+                    vec3 smoke = curlNoise(dir * 2.8 + vec3(uTime * 0.16, aColorSeed * 4.0, age * 0.2));
+                    smoke *= min(travel * 0.15, 16.0) * uNoiseStrength;
+                    basePos = uExplosionCenter + dir * travel + smoke;
+                    basePos.y -= 0.55 * age * age;
+                    vSpeed = velocity;
+                    vCore = exp(-age * 1.35);
+                }
+                else {
+                    // 状态 1-4: Curl Noise 驱动的流体沙尘向清晰字形聚合
+                    float isWord = step(3.5, uState);
+                    float flowRole = isWord * step(0.5, aTextRole);
+                    vec3 curl = curlNoise(basePos * mix(0.055, 0.042, isWord) + vec3(0.0, uTime * 0.12, uTime * 0.06));
+                    vec3 tangent = normalize(vec3(-basePos.y, basePos.x, 0.35));
+                    float transitionFlow = (1.0 - easeProgress) * mix(11.0, 18.0, isWord);
+                    float settleMist = mix(0.42, 0.055, isWord) * uNoiseStrength;
+                    settleMist = mix(settleMist, 4.8 * uNoiseStrength, flowRole);
+                    noiseOffset = curl * (transitionFlow * uNoiseStrength + settleMist);
+                    noiseOffset += tangent * (
+                        sin(uProgress * 3.14159) * mix(4.0, 7.0, isWord)
+                        + flowRole * (2.2 + sin(uTime * 0.7 + aColorSeed * 6.2831) * 1.4)
+                    );
+                    vSpeed = length(noiseOffset) + (1.0 - easeProgress) * 10.0;
+                    float coreDepth = 1.0 - smoothstep(0.35, 4.2, abs(basePos.z - aTargetPosition.z));
+                    vCore = coreDepth * smoothstep(0.68, 0.96, aColorSeed) * (1.0 - flowRole);
+                }
+
+                vec4 finalPosition = vec4(basePos + noiseOffset, 1.0);
+                
+                float distToCenter = length(finalPosition.xyz);
+                vDensity = 1.0 - smoothstep(0.0, 55.0, distToCenter);
+                
+                vWorldPosition = finalPosition.xyz;
+                
+                vec4 mvPosition = modelViewMatrix * finalPosition;
+                gl_Position = projectionMatrix * mvPosition;
+                
+                float calculatedSize = (aSize * (0.8 + sin(uTime * 3.0 + aRandomSpeed * 8.0) * 0.25)) * (110.0 / -mvPosition.z);
+                float wordScale = (uState == 4.0) ? mix(0.72, 1.25, step(0.5, aTextRole)) : 1.0;
+                gl_PointSize = clamp(calculatedSize * wordScale, 0.65, 4.5); 
+            }
+        `;
+
+        const PARTICLE_FRAGMENT_SHADER = `
+            uniform float uTime;
+            uniform float uStateAge;
+            varying vec3 vWorldPosition;
+            varying float vDensity;
+            varying float vState;
+            varying float vSpeed;
+            varying float vCore;
+            varying float vColorSeed;
+            varying float vTextRole;
+
+            vec3 hsv2rgb(vec3 c) {
+                vec3 rgb = clamp(abs(mod(c.x * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+                rgb = rgb * rgb * (3.0 - 2.0 * rgb);
+                return c.z * mix(vec3(1.0), rgb, c.y);
+            }
+
+            void main() {
+                vec2 centerDist = gl_PointCoord - vec2(0.5);
+                float distSq = dot(centerDist, centerDist);
+                if (distSq > 0.25) discard;
+                
+                float alpha = exp(-distSq * 13.5);
+                
+                vec3 finalColor = vec3(1.0);
+                
+                if (vState == 4.0) {
+                    // 状态 4: 皇家蓝 -> 电光青 -> 克制的纯白骨架
+                    vec3 royalBlue = vec3(0.015, 0.055, 0.58);
+                    vec3 electricCyan = vec3(0.0, 0.95, 1.0);
+                    float centerDistance = length(vWorldPosition.xy) / 48.0;
+                    float speedGlow = smoothstep(0.4, 12.0, vSpeed);
+                    float cyanMix = clamp(0.38 + (1.0 - centerDistance) * 0.46 + speedGlow * 0.24, 0.0, 1.0);
+                    finalColor = mix(royalBlue, electricCyan, cyanMix);
+                    float whiteCore = clamp(vCore * (0.24 + (1.0 - centerDistance) * 0.38), 0.0, 0.62);
+                    finalColor = mix(finalColor, vec3(0.94, 0.99, 1.0), whiteCore);
+                    float flowRole = step(0.5, vTextRole);
+                    finalColor = mix(finalColor, mix(royalBlue, electricCyan, 0.58 + vSpeed * 0.025), flowRole);
+                    alpha *= mix(mix(0.52, 0.82, vCore), 0.30 + smoothstep(1.5, 7.0, vSpeed) * 0.28, flowRole);
+                } 
+                else if (vState == 0.0) {
+                    vec3 deepBlue = vec3(0.005, 0.025, 0.22);
+                    vec3 electricCyan = vec3(0.0, 0.82, 1.0);
+                    finalColor = mix(deepBlue, electricCyan, clamp(vDensity + vSpeed * 0.08, 0.0, 1.0));
+                    finalColor = mix(finalColor, vec3(1.0), vCore * 0.72);
+                    alpha *= 0.72 + vCore * 0.24;
+                }
+                else if (vState == 5.0) {
+                    float hue = fract(vColorSeed + 0.04 * sin(uTime * 0.8 + vColorSeed * 12.0));
+                    finalColor = hsv2rgb(vec3(hue, 0.78, 1.0));
+                    finalColor = mix(finalColor, vec3(1.0), smoothstep(82.0, 108.0, vSpeed) * 0.35);
+                    float fade = 0.24 + 0.76 * (1.0 - smoothstep(2.2, 7.0, uStateAge));
+                    alpha *= fade;
+                }
+                else {
+                    // 状态 1, 2, 3 (液体数字)
+                    vec3 oceanBlue = vec3(0.0, 0.15, 0.75);
+                    vec3 auroraGreen = vec3(0.0, 0.95, 0.55);
+                    
+                    float dynamicColor = sin(uTime * 0.4 + vWorldPosition.y * 0.04) * 0.5 + 0.5;
+                    finalColor = mix(oceanBlue, auroraGreen, dynamicColor);
+                }
+
+                gl_FragColor = vec4(finalColor * 1.12, alpha * 0.92);
+            }
+        `;
+    </script>
+
+
+    <!-- ==================== JAVASCRIPT 逻辑开发 ==================== -->
+    <script>
+        const PARTICLE_COUNT = 75000;
+        let scene, camera, renderer, composer;
+        let particleSystem, particleGeometry, particleMaterial;
+        let textOutlineMesh, textOutlineMaterial;
+        let clock = new THREE.Clock();
+        
+        let offscreenCanvas, offscreenCtx;
+
+        let currentGestureState = 4;
+        let targetGestureState = 4;
+        let gestureProgress = 1.0;
+        let stateTransitionSpeed = 0.015;
+        let noiseStrength = 1.2;
+        let stateAge = 0.0;
+
+        let gestureFrameBuffer = [];
+        const BUFFER_SIZE = 7;
+
+        let isHandActive = false;
+        let rawHandPos = new THREE.Vector3();
+        let lerpedHandPos = new THREE.Vector3();
+
+        const cachedPositions = {};
+        let lastFpsUpdate = 0;
+        let frameCount = 0;
+
+        // UI 元素
+        const loadingMask = document.getElementById('loading-mask');
+        const maskStatus = document.getElementById('mask-status');
+        const startBtn = document.getElementById('start-btn');
+        const manualStartBtn = document.getElementById('manual-start-btn');
+        const errorDialog = document.getElementById('error-dialog');
+        const errorDesc = document.getElementById('error-desc');
+        
+        // 顶部悬浮胶囊 HUD 元素
+        const gestureBox = document.getElementById('gesture-indicator-box');
+        const gestureIcon = document.getElementById('gesture-icon');
+        const gestureTitle = document.getElementById('gesture-title');
+        const gestureDesc = document.getElementById('gesture-desc');
+        
+        const noiseSlider = document.getElementById('noise-slider');
+        const noiseVal = document.getElementById('noise-val');
+        const fpsCounter = document.getElementById('fps-counter');
+        const handStatus = document.getElementById('hand-status');
+        const memoryPopup = document.getElementById('memory-popup');
+        const memoryStamp = document.getElementById('memory-stamp');
+        let memoryPopupTimer = null;
+        let memorySequence = 0;
+
+        const GESTURE_INFO = {
+            0: { icon: '✊', title: 'FIST / BLACKHOLE', desc: '银河黑洞吸引态：引力坍缩与同心盘自转' },
+            1: { icon: '☝️', title: 'DIGIT ONE (1)', desc: '矩阵重构：液态数字 1 形态' },
+            2: { icon: '✌️', title: 'DIGIT TWO (2)', desc: '矩阵重构：液态数字 2 形态' },
+            3: { icon: '🤟', title: 'DIGIT THREE (3)', desc: '矩阵重构：液态数字 3 形态' },
+            4: { icon: '🖖', title: 'WEIMETA VECTOR', desc: '极速涡旋与赛博立体电光蓝字样' },
+            5: { icon: '🖐️', title: 'EXPLOSION / FIREWORK', desc: '星云大爆炸：随手掌位置释放强大斥力' }
+        };
+
+        function initOffscreenCanvas() {
+            offscreenCanvas = document.createElement('canvas');
+            offscreenCanvas.width = 1024;
+            offscreenCanvas.height = 512;
+            offscreenCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
+        }
+
+        function sampleTextCoordinates(text, isMultiChar = false) {
+            if (cachedPositions[text]) return cachedPositions[text];
+
+            const ctx = offscreenCtx;
+            const w = offscreenCanvas.width;
+            const h = offscreenCanvas.height;
+            
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, w, h);
+
+            ctx.fillStyle = '#FFFFFF';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            if (isMultiChar) {
+                ctx.font = '900 150px Arial Black, Arial, Helvetica, sans-serif';
+                ctx.fillText(text, w / 2, h / 2);
+            } else {
+                ctx.font = '900 360px Arial, Helvetica, sans-serif';
+                ctx.fillText(text, w / 2, h / 2);
+            }
+
+            const imgData = ctx.getImageData(0, 0, w, h);
+            const data = imgData.data;
+            const tempPoints = [];
+
+            for (let y = 0; y < h; y += 1) {
+                for (let x = 0; x < w; x += 1) {
+                    const idx = (y * w + x) * 4;
+                    if (data[idx] > 180) {
+                        const px = ((x / w) - 0.5) * (isMultiChar ? 110.0 : 80.0);
+                        const py = (0.5 - (y / h)) * (isMultiChar ? 58.0 : 80.0);
+                        tempPoints.push({ x: px, y: py });
+                    }
+                }
+            }
+
+            if (tempPoints.length === 0) {
+                for (let i = 0; i < PARTICLE_COUNT; i++) {
+                    tempPoints.push({ x: (Math.random() - 0.5) * 20, y: (Math.random() - 0.5) * 20 });
+                }
+            }
+
+            const positionArray = new Float32Array(PARTICLE_COUNT * 3);
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const isFlowParticle = isMultiChar && i >= PARTICLE_COUNT * 0.68;
+
+                if (isFlowParticle) {
+                    const x = (Math.random() - 0.5) * 116.0;
+                    const phase = Math.random() * Math.PI * 2.0;
+                    const ribbon = Math.sin(x * 0.105 + phase) * 8.0 + Math.sin(x * 0.031 - phase) * 5.0;
+                    positionArray[i * 3] = x;
+                    positionArray[i * 3 + 1] = ribbon + (Math.random() - 0.5) * 8.0;
+                    positionArray[i * 3 + 2] = -3.0 - Math.random() * 14.0;
+                } else {
+                    const sourcePoint = tempPoints[Math.floor(Math.random() * tempPoints.length)];
+                    const jitter = isMultiChar ? 0.14 : 0.4;
+                    positionArray[i * 3] = sourcePoint.x + (Math.random() - 0.5) * jitter;
+                    positionArray[i * 3 + 1] = sourcePoint.y + (Math.random() - 0.5) * jitter;
+                    const zDepthRange = isMultiChar ? 1.6 : 5.5;
+                    positionArray[i * 3 + 2] = (Math.random() - 0.5) * zDepthRange;
+                }
+            }
+
+            cachedPositions[text] = positionArray;
+            return positionArray;
+        }
+
+        function createTextOutlineMesh() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 2048;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            const text = 'WEIMETA';
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.lineJoin = 'round';
+            ctx.font = '900 300px Arial Black, Arial, Helvetica, sans-serif';
+
+            ctx.shadowColor = '#006dff';
+            ctx.shadowBlur = 42;
+            ctx.strokeStyle = 'rgba(0, 92, 255, 0.48)';
+            ctx.lineWidth = 30;
+            ctx.strokeText(text, canvas.width / 2, canvas.height / 2 + 4);
+
+            ctx.shadowColor = '#00f0ff';
+            ctx.shadowBlur = 22;
+            ctx.strokeStyle = '#00d9ff';
+            ctx.lineWidth = 13;
+            ctx.strokeText(text, canvas.width / 2, canvas.height / 2 + 4);
+
+            ctx.shadowBlur = 8;
+            ctx.strokeStyle = '#ecffff';
+            ctx.lineWidth = 4;
+            ctx.strokeText(text, canvas.width / 2, canvas.height / 2 + 4);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.minFilter = THREE.LinearFilter;
+            texture.magFilter = THREE.LinearFilter;
+            texture.needsUpdate = true;
+
+            textOutlineMaterial = new THREE.MeshBasicMaterial({
+                map: texture,
+                color: 0xffffff,
+                transparent: true,
+                opacity: 1.0,
+                depthWrite: false,
+                depthTest: false,
+                blending: THREE.AdditiveBlending
+            });
+
+            textOutlineMesh = new THREE.Mesh(new THREE.PlaneGeometry(110, 27.5), textOutlineMaterial);
+            textOutlineMesh.position.z = 2.2;
+            textOutlineMesh.renderOrder = 10;
+            scene.add(textOutlineMesh);
+        }
+
+        function generateGalaxyCoordinates() {
+            const key = 'CONCENTRIC_GALAXY';
+            if (cachedPositions[key]) return cachedPositions[key];
+
+            const positionArray = new Float32Array(PARTICLE_COUNT * 3);
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const shell = Math.floor(Math.random() * 7.0);
+                const radius = 2.0 + shell * 5.2 + Math.pow(Math.random(), 1.8) * 8.0;
+                const arm = i % 5;
+                const angle = (arm / 5.0) * Math.PI * 2.0 + radius * 0.18 + (Math.random() - 0.5) * 0.75;
+                const spherical = Math.random() < 0.22;
+
+                if (spherical) {
+                    const phi = Math.acos(2.0 * Math.random() - 1.0);
+                    positionArray[i * 3] = radius * Math.sin(phi) * Math.cos(angle);
+                    positionArray[i * 3 + 1] = radius * Math.cos(phi) * 0.72;
+                    positionArray[i * 3 + 2] = radius * Math.sin(phi) * Math.sin(angle);
+                } else {
+                    positionArray[i * 3] = radius * Math.cos(angle);
+                    positionArray[i * 3 + 1] = (Math.random() - 0.5) * (2.0 + radius * 0.14);
+                    positionArray[i * 3 + 2] = radius * Math.sin(angle);
+                }
+            }
+
+            cachedPositions[key] = positionArray;
+            return positionArray;
+        }
+
+        function initWebGL() {
+            const container = document.getElementById('canvas-container');
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x000000, 0.015);
+
+            camera = new THREE.PerspectiveCamera(65, width / height, 1, 500);
+            camera.position.z = 68;
+
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true, 
+                powerPreference: "high-performance",
+                alpha: false 
+            });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setClearColor(0x000000, 1.0);
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            container.appendChild(renderer.domElement);
+
+            particleGeometry = new THREE.BufferGeometry();
+
+            const basePositions = generateGalaxyCoordinates();
+            const initialTargetPositions = sampleTextCoordinates("WEIMETA", true);
+
+            const sizes = new Float32Array(PARTICLE_COUNT);
+            const randomSpeeds = new Float32Array(PARTICLE_COUNT);
+            const colorSeeds = new Float32Array(PARTICLE_COUNT);
+            const explosionDirections = new Float32Array(PARTICLE_COUNT * 3);
+            const textRoles = new Float32Array(PARTICLE_COUNT);
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                sizes[i] = Math.random() < 0.1 ? 1.85 : (0.75 + Math.random() * 0.7);
+                randomSpeeds[i] = 0.2 + Math.random() * 1.5;
+                colorSeeds[i] = Math.random();
+                textRoles[i] = i >= PARTICLE_COUNT * 0.68 ? 1.0 : 0.0;
+
+                const z = Math.random() * 2.0 - 1.0;
+                const theta = Math.random() * Math.PI * 2.0;
+                const radial = Math.sqrt(1.0 - z * z);
+                explosionDirections[i * 3] = radial * Math.cos(theta);
+                explosionDirections[i * 3 + 1] = radial * Math.sin(theta);
+                explosionDirections[i * 3 + 2] = z;
+            }
+
+            particleGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(basePositions), 3));
+            particleGeometry.setAttribute('aTargetPosition', new THREE.BufferAttribute(new Float32Array(initialTargetPositions), 3));
+            particleGeometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
+            particleGeometry.setAttribute('aRandomSpeed', new THREE.BufferAttribute(randomSpeeds, 1));
+            particleGeometry.setAttribute('aColorSeed', new THREE.BufferAttribute(colorSeeds, 1));
+            particleGeometry.setAttribute('aExplosionDirection', new THREE.BufferAttribute(explosionDirections, 3));
+            particleGeometry.setAttribute('aTextRole', new THREE.BufferAttribute(textRoles, 1));
+
+            particleMaterial = new THREE.ShaderMaterial({
+                vertexShader: PARTICLE_VERTEX_SHADER,
+                fragmentShader: PARTICLE_FRAGMENT_SHADER,
+                uniforms: {
+                    uTime: { value: 0.0 },
+                    uProgress: { value: 1.0 },
+                    uNoiseStrength: { value: noiseStrength },
+                    uState: { value: parseFloat(currentGestureState) },
+                    uHandPos: { value: new THREE.Vector3(0, 0, 0) },
+                    uHandActive: { value: 0.0 },
+                    uStateAge: { value: 0.0 },
+                    uExplosionCenter: { value: new THREE.Vector3(0, 0, 0) }
+                },
+                transparent: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending
+            });
+
+            particleSystem = new THREE.Points(particleGeometry, particleMaterial);
+            scene.add(particleSystem);
+            createTextOutlineMesh();
+
+            initPostProcessing();
+
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function initPostProcessing() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            composer = new THREE.EffectComposer(renderer);
+
+            const renderPass = new THREE.RenderPass(scene, camera);
+            composer.addPass(renderPass);
+
+            const bloomPass = new THREE.UnrealBloomPass(
+                new THREE.Vector2(width, height),
+                0.76,
+                0.56,
+                0.18
+            );
+            
+            composer.addPass(bloomPass);
+        }
+
+        function onWindowResize() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(w, h);
+            composer.setSize(w, h);
+        }
+
+        // 联动更新底部科幻仪表盘的高亮反馈
+        function updateDashboardHighlights(state) {
+            // 清除所有的激活状态
+            document.querySelectorAll('.state-card').forEach(card => {
+                card.classList.remove('bg-cyan-950/40', 'border-cyan-400/50', 'shadow-[0_0_15px_rgba(0,240,255,0.15)]');
+                card.classList.add('bg-black/40', 'border-white/5');
+                const title = card.querySelector('.card-title');
+                if (title) title.className = 'text-xs font-bold text-gray-400 font-mono card-title';
+            });
+
+            // 亮起激活的卡片
+            const activeCard = document.getElementById(`state-card-${state}`);
+            if (activeCard) {
+                activeCard.classList.remove('bg-black/40', 'border-white/5');
+                activeCard.classList.add('bg-cyan-950/40', 'border-cyan-400/50', 'shadow-[0_0_15px_rgba(0,240,255,0.15)]');
+                const title = activeCard.querySelector('.card-title');
+                if (title) title.className = 'text-xs font-bold text-cyan-400 font-mono card-title animate-pulse';
+            }
+        }
+
+        function triggerStateTransition(newState) {
+            if (newState === currentGestureState) return;
+
+            const positionAttr = particleGeometry.attributes.position;
+            const targetAttr = particleGeometry.attributes.aTargetPosition;
+            
+            const basePosArr = positionAttr.array;
+            const targetPosArr = targetAttr.array;
+            const progress = gestureProgress;
+            
+            const ease = progress < 0.5 ? 4.0 * progress * progress * progress : 1.0 - Math.pow(-2.0 * progress + 2.0, 3.0) / 2.0;
+
+            for (let i = 0; i < basePosArr.length; i++) {
+                basePosArr[i] = basePosArr[i] + (targetPosArr[i] - basePosArr[i]) * ease;
+            }
+            positionAttr.needsUpdate = true;
+
+            let nextPositions;
+            switch(newState) {
+                case 0:
+                    nextPositions = generateGalaxyCoordinates();
+                    break;
+                case 1:
+                    nextPositions = sampleTextCoordinates("1", false);
+                    break;
+                case 2:
+                    nextPositions = sampleTextCoordinates("2", false);
+                    break;
+                case 3:
+                    nextPositions = sampleTextCoordinates("3", false);
+                    break;
+                case 4:
+                    nextPositions = sampleTextCoordinates("WEIMETA", true);
+                    break;
+                case 5:
+                    nextPositions = generateGalaxyCoordinates();
+                    break;
+                default:
+                    nextPositions = generateGalaxyCoordinates();
+            }
+
+            targetAttr.copyArray(nextPositions);
+            targetAttr.needsUpdate = true;
+
+            currentGestureState = newState;
+            gestureProgress = 0.0;
+            stateAge = 0.0;
+            particleMaterial.uniforms.uState.value = parseFloat(newState);
+            particleMaterial.uniforms.uProgress.value = 0.0;
+            particleMaterial.uniforms.uStateAge.value = 0.0;
+
+            if (newState === 5) {
+                const center = isHandActive ? lerpedHandPos : new THREE.Vector3(0, 0, 0);
+                particleMaterial.uniforms.uExplosionCenter.value.copy(center);
+                triggerMemoryPopup();
+            }
+
+            updateGestureUI(newState);
+            updateDashboardHighlights(newState);
+        }
+
+        function triggerMemoryPopup() {
+            memorySequence += 1;
+            memoryStamp.innerText = `SNAPSHOT ${String(memorySequence).padStart(4, '0')}`;
+            memoryPopup.classList.remove('is-visible');
+            void memoryPopup.offsetWidth;
+            memoryPopup.classList.add('is-visible');
+
+            window.clearTimeout(memoryPopupTimer);
+            memoryPopupTimer = window.setTimeout(() => {
+                memoryPopup.classList.remove('is-visible');
+            }, 4200);
+        }
+
+        function updateGestureUI(state) {
+            const info = GESTURE_INFO[state];
+            if (info) {
+                gestureIcon.innerText = info.icon;
+                gestureTitle.innerText = info.title;
+                gestureDesc.innerText = info.desc;
+
+                // 产生弹性过渡
+                gestureBox.style.opacity = '1';
+                gestureBox.style.transform = 'scale(1)';
+            }
+        }
+
+        function initMediaPipe() {
+            maskStatus.innerText = "正在激活前置摄像头并配置 MediaPipe 底层识别流...";
+
+            const videoElement = document.getElementById('webcam');
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.65,
+                minTrackingConfidence: 0.65
+            });
+
+            hands.onResults(onHandResults);
+
+            const cameraHelper = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({ image: videoElement });
+                },
+                width: 320,
+                height: 240
+            });
+
+            cameraHelper.start()
+                .then(() => {
+                    maskStatus.innerText = "视觉分析仪配置成功！";
+                    setTimeout(() => {
+                        loadingMask.style.display = 'none';
+                        updateGestureUI(4);
+                        updateDashboardHighlights(4);
+                    }, 800);
+                })
+                .catch((err) => {
+                    console.error("Camera access failed", err);
+                    showCameraError(err);
+                });
+        }
+
+        function showCameraError(err) {
+            loadingMask.style.display = 'none';
+            errorDialog.classList.remove('hidden');
+        }
+
+        function onHandResults(results) {
+            if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+                isHandActive = false;
+                gestureFrameBuffer.length = 0;
+                particleMaterial.uniforms.uHandActive.value = 0.0;
+                handStatus.innerText = "NO DETECTED";
+                handStatus.className = "text-red-400 font-bold text-xs mt-0.5";
+                return;
+            }
+
+            isHandActive = true;
+            particleMaterial.uniforms.uHandActive.value = 1.0;
+            handStatus.innerText = "ACTIVE-TRACKING";
+            handStatus.className = "text-green-400 font-bold text-xs mt-0.5";
+
+            const landmarks = results.multiHandLandmarks[0];
+
+            const wrist = landmarks[0];
+            const pX = -(wrist.x - 0.5) * 110.0;
+            const pY = -(wrist.y - 0.5) * 110.0;
+            const pZ = (wrist.z) * 100.0;
+
+            rawHandPos.set(pX, pY, pZ);
+
+            const classifiedState = classifyGesture(landmarks);
+
+            if (classifiedState === null) return;
+
+            gestureFrameBuffer.push(classifiedState);
+            if (gestureFrameBuffer.length > BUFFER_SIZE) {
+                gestureFrameBuffer.shift();
+            }
+
+            if (gestureFrameBuffer.length >= 5) {
+                const counts = gestureFrameBuffer.reduce((acc, state) => {
+                    acc[state] = (acc[state] || 0) + 1;
+                    return acc;
+                }, {});
+                const stableState = Number(Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0]);
+                const stableVotes = counts[stableState];
+                const requiredVotes = (stableState === 4 || stableState === 5) ? 5 : 4;
+                if (stableVotes >= requiredVotes) {
+                    targetGestureState = stableState;
+                }
+            }
+        }
+
+        function landmarkDistance(a, b) {
+            return Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+        }
+
+        function landmarkAngle(a, b, c) {
+            const ab = { x: a.x - b.x, y: a.y - b.y, z: (a.z || 0) - (b.z || 0) };
+            const cb = { x: c.x - b.x, y: c.y - b.y, z: (c.z || 0) - (b.z || 0) };
+            const dot = ab.x * cb.x + ab.y * cb.y + ab.z * cb.z;
+            const lengthProduct = Math.max(
+                Math.hypot(ab.x, ab.y, ab.z) * Math.hypot(cb.x, cb.y, cb.z),
+                0.00001
+            );
+            return Math.acos(THREE.MathUtils.clamp(dot / lengthProduct, -1, 1)) * 180 / Math.PI;
+        }
+
+        function classifyGesture(lm) {
+            const palmCenter = [lm[0], lm[5], lm[9], lm[13], lm[17]].reduce(
+                (sum, point) => ({
+                    x: sum.x + point.x / 5,
+                    y: sum.y + point.y / 5,
+                    z: sum.z + (point.z || 0) / 5
+                }),
+                { x: 0, y: 0, z: 0 }
+            );
+            const palmWidth = Math.max(landmarkDistance(lm[5], lm[17]), 0.001);
+            const palmRadius = [lm[5], lm[9], lm[13], lm[17]].reduce(
+                (sum, point) => sum + landmarkDistance(point, palmCenter),
+                0
+            ) / 4;
+
+            function isFingerExtended(mcp, pip, dip, tip) {
+                const pipAngle = landmarkAngle(lm[mcp], lm[pip], lm[tip]);
+                const dipAngle = landmarkAngle(lm[pip], lm[dip], lm[tip]);
+                const reachRatio = landmarkDistance(lm[tip], lm[0]) / Math.max(landmarkDistance(lm[pip], lm[0]), 0.001);
+                const palmReach = landmarkDistance(lm[tip], palmCenter) / Math.max(palmRadius, 0.001);
+                return pipAngle > 138 && dipAngle > 132 && reachRatio > 1.03 && palmReach > 1.65;
+            }
+
+            const fingers = [
+                isFingerExtended(5, 6, 7, 8),
+                isFingerExtended(9, 10, 11, 12),
+                isFingerExtended(13, 14, 15, 16),
+                isFingerExtended(17, 18, 19, 20)
+            ];
+
+            const thumbPalmDistance = landmarkDistance(lm[4], palmCenter) / palmWidth;
+            const thumbIndexDistance = landmarkDistance(lm[4], lm[5]) / palmWidth;
+            const isThumbExtended = thumbPalmDistance > 0.92 && thumbIndexDistance > 0.64;
+            const extendedFingers = fingers.filter(Boolean).length;
+
+            if (extendedFingers === 0 && !isThumbExtended) return 0;
+            if (fingers[0] && !fingers[1] && !fingers[2] && !fingers[3]) return 1;
+            if (fingers[0] && fingers[1] && !fingers[2] && !fingers[3]) return 2;
+            if (fingers[0] && fingers[1] && fingers[2] && !fingers[3]) return 3;
+            if (extendedFingers === 4) return isThumbExtended ? 5 : 4;
+
+            return null;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const delta = clock.getDelta();
+            const time = clock.getElapsedTime();
+            stateAge += delta;
+
+            if (isHandActive) {
+                lerpedHandPos.lerp(rawHandPos, 0.15);
+                particleMaterial.uniforms.uHandPos.value.copy(lerpedHandPos);
+            } else {
+                const orbitX = Math.sin(time * 0.4) * 14.0;
+                const orbitY = Math.cos(time * 0.25) * 9.0;
+                particleMaterial.uniforms.uHandPos.value.set(orbitX, orbitY, 0.0);
+            }
+
+            if (currentGestureState !== targetGestureState) {
+                triggerStateTransition(targetGestureState);
+            }
+
+            if (gestureProgress < 1.0) {
+                gestureProgress += stateTransitionSpeed;
+                if (gestureProgress > 1.0) gestureProgress = 1.0;
+                particleMaterial.uniforms.uProgress.value = gestureProgress;
+            }
+
+            particleMaterial.uniforms.uTime.value = time;
+            particleMaterial.uniforms.uStateAge.value = stateAge;
+
+            const outlineTargetOpacity = currentGestureState === 4
+                ? THREE.MathUtils.smoothstep(gestureProgress, 0.35, 0.92)
+                : 0.0;
+            textOutlineMaterial.opacity += (outlineTargetOpacity - textOutlineMaterial.opacity) * 0.14;
+            textOutlineMesh.visible = textOutlineMaterial.opacity > 0.01;
+
+            // 字形始终正对相机，避免绕到背面后出现镜像反字。
+            particleSystem.rotation.y += (0.0 - particleSystem.rotation.y) * 0.12;
+            particleSystem.rotation.x += (0.0 - particleSystem.rotation.x) * 0.12;
+
+            composer.render();
+
+            frameCount++;
+            const now = performance.now();
+            if (now - lastFpsUpdate >= 1000) {
+                const fps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
+                fpsCounter.innerText = fps;
+                frameCount = 0;
+                lastFpsUpdate = now;
+            }
+        }
+
+        window.onload = function() {
+            initOffscreenCanvas();
+            initWebGL();
+            animate();
+
+            maskStatus.innerText = "图形核心启动成功。请点击下方按钮授予摄像头权限开始探索：";
+            startBtn.classList.remove('hidden');
+            manualStartBtn.classList.remove('hidden');
+        };
+
+        startBtn.onclick = function() {
+            startBtn.disabled = true;
+            startBtn.innerText = "正在链接硬件设备...";
+            initMediaPipe();
+        };
+
+        manualStartBtn.onclick = function() {
+            loadingMask.style.display = 'none';
+            updateGestureUI(4);
+            updateDashboardHighlights(4);
+        };
+
+        document.getElementById('btn-next-state').onclick = function() {
+            const stateOrder = [4, 5, 0, 1, 2, 3];
+            const currentIndex = stateOrder.indexOf(targetGestureState);
+            const nextIndex = (currentIndex + 1) % stateOrder.length;
+            targetGestureState = stateOrder[nextIndex];
+            
+            isHandActive = false;
+            particleMaterial.uniforms.uHandActive.value = 0.0;
+        };
+
+        document.getElementById('close-error-btn').onclick = function() {
+            errorDialog.classList.add('hidden');
+            updateGestureUI(4);
+            updateDashboardHighlights(4);
+        };
+
+        const camBtn = document.getElementById('toggle-cam-btn');
+        const webcamVideo = document.getElementById('webcam');
+        let camVisible = false;
+        camBtn.onclick = function() {
+            camVisible = !camVisible;
+            webcamVideo.style.display = camVisible ? 'block' : 'none';
+        };
+
+        noiseSlider.oninput = function(e) {
+            const val = parseFloat(e.target.value);
+            noiseStrength = val;
+            noiseVal.innerText = val.toFixed(1);
+            particleMaterial.uniforms.uNoiseStrength.value = val;
+        };
+    </script>
+</body>
+</html>
