@@ -389,8 +389,8 @@
                     </div>
                     <div id="gesture-pinch-card" class="gesture-card rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 opacity-60">
                         <p class="text-[9px] tracking-widest text-slate-500">DUAL HAND</p>
-                        <p class="mt-1 text-xs font-bold">✊ 握拳＋👌 捏合</p>
-                        <p class="mt-1 text-[9px] text-slate-400">捏合开启 · 张掌跟随与滑动</p>
+                        <p class="mt-1 text-xs font-bold">✊ 握拳＋🖐 五掌</p>
+                        <p class="mt-1 text-[9px] text-slate-400">自动轮播 · 五掌控制远近</p>
                     </div>
                 </div>
 
@@ -427,7 +427,7 @@
                         模拟双手
                     </button>
                     <button id="manual-swipe-btn" class="rounded-xl border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-[9px] font-bold tracking-wider text-amber-200 hover:bg-amber-300/15">
-                        模拟滑动
+                        模拟远近
                     </button>
                 </div>
             </div>
@@ -445,12 +445,12 @@
         <div id="media-cube-stage">
             <div id="media-face-current" class="media-face">
                 <img id="selected-image" alt="当前图片">
-                <video id="selected-video" controls playsinline loop></video>
+                <video id="selected-video" controls playsinline></video>
                 <div id="media-loading" class="media-loading">正在准备媒体画面...</div>
             </div>
             <div id="media-face-next" class="media-face is-idle">
                 <img id="next-image" alt="下一张图片">
-                <video id="next-video" controls playsinline loop></video>
+                <video id="next-video" controls playsinline></video>
                 <div id="next-media-loading" class="media-loading">正在准备媒体画面...</div>
             </div>
         </div>
@@ -490,6 +490,7 @@
         const BACKGROUND_PARTICLE_COUNT = 18000;
         const IMAGE_SLOT_COUNT = 12;
         const MINI_MEDIA_COUNT = 12;
+        const IMAGE_AUTOPLAY_DURATION_MS = 3000;
         const SHAPE_TRANSITION_DURATION = 1.4;
         const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".webp", ".JPG", ".JPEG", ".WEBP"];
         const VIDEO_EXTENSIONS = [".mp4", ".MP4"];
@@ -506,6 +507,7 @@
         const DUAL_PINCH_HOLD_MS = 240;
         const DUAL_RELEASE_HOLD_MS = 220;
         const DUAL_ROLE_LOST_MS = 480;
+        const DUAL_FIST_EXIT_HOLD_MS = 400;
         const DUAL_RETURN_MAX_MS = 1800;
         const DUAL_PINCH_MAX_PALM_SPEED = 0.38;
         const DUAL_SWIPE_DEAD_ZONE = 0.05;
@@ -843,8 +845,13 @@
         let lastForegroundSwipeAt = 0;
         let foregroundTransitionActive = false;
         let activeMediaFaceIndex = 0;
+        let automaticAdvanceTimer = 0;
+        let automaticAdvanceGeneration = 0;
+        let automaticScheduledMediaUrl = null;
         let mediaFollowTarget = { x: window.innerWidth * 0.5, y: window.innerHeight * 0.5 };
         let mediaFollowCurrent = { x: window.innerWidth * 0.5, y: window.innerHeight * 0.5 };
+        let mediaDepthScaleTarget = 1;
+        let mediaDepthScaleCurrent = 1;
         const cubeCarouselVideoTextures = [];
         let cubeCarouselVideoElements = [];
         let offscreenCanvas;
@@ -865,6 +872,7 @@
         let dualPinchStableSince = 0;
         let dualReleaseStableSince = 0;
         let dualRoleLostSince = 0;
+        let dualExitFistsStableSince = 0;
         let dualPinchLatched = false;
         let dualHandComboActive = false;
         let dualMediaPhase = "idle";
@@ -2241,6 +2249,7 @@
             dom.mediaLoading.textContent = "正在准备视频画面...";
             fitMediaPreview(selected.width, selected.height);
             selectedVideoElement = dom.selectedVideo;
+            selectedVideoElement.loop = false;
             selectedVideoElement.muted = !soundEnabled;
             selectedVideoElement.volume = 1;
             selectedVideoElement.src = selected.displayUrl || buildMediaUrl(selected.url);
@@ -2283,7 +2292,6 @@
             };
             selectedVideoElement.oncanplay = () => {
                 revealVideo();
-                playSelectedVideo(selectedVideoElement, requestId);
             };
             selectedVideoElement.onerror = () => {
                 if (requestId !== selectedVideoRequestId) return;
@@ -2291,7 +2299,6 @@
                 dom.mediaLoading.textContent = "此视频编码无法在当前浏览器播放";
                 document.body.dataset.mediaPreviewReady = "false";
             };
-            playSelectedVideo(selectedVideoElement, requestId);
         }
 
         function showSelectedPhoto(selected) {
@@ -2351,8 +2358,14 @@
             selectedImageGroup.position.copy(mediaExtractionWorld);
             selectedImageGroup.scale.setScalar(0.04);
             dom.mediaPreview.classList.add("is-visible");
-            mediaFollowTarget = { x: screenX, y: screenY };
+            mediaFollowTarget = {
+                x: mediaPreviewLayout.x,
+                y: mediaPreviewLayout.y
+            };
             mediaFollowCurrent = { x: screenX, y: screenY };
+            mediaDepthScaleTarget = 1;
+            mediaDepthScaleCurrent = 1;
+            clearAutomaticAdvance();
             imageTransition = 0;
             imageTarget = 1;
             const selectedFileName = selected.url.split("/").pop() || selected.url;
@@ -2382,6 +2395,47 @@
             return transitionForegroundMedia(currentIndex + (direction >= 0 ? 1 : -1), direction);
         }
 
+        function clearAutomaticAdvance() {
+            automaticAdvanceGeneration += 1;
+            window.clearTimeout(automaticAdvanceTimer);
+            automaticAdvanceTimer = 0;
+            automaticScheduledMediaUrl = null;
+            [dom.selectedVideo, dom.nextVideo].forEach((video) => {
+                video.onended = null;
+            });
+        }
+
+        function scheduleAutomaticAdvance(selected, faceIndex) {
+            clearAutomaticAdvance();
+            if (dualMediaPhase !== "displaying" || !selected) return;
+            automaticScheduledMediaUrl = selected.url;
+            const generation = automaticAdvanceGeneration;
+
+            if (selected.type === "video") {
+                const video = faceIndex === 0 ? dom.selectedVideo : dom.nextVideo;
+                video.loop = false;
+                selectedVideoElement = video;
+                selectedVideoRequestId += 1;
+                playSelectedVideo(video, selectedVideoRequestId);
+                video.onended = () => {
+                    if (
+                        generation !== automaticAdvanceGeneration ||
+                        dualMediaPhase !== "displaying"
+                    ) return;
+                    advanceForegroundMedia(1);
+                };
+                return;
+            }
+
+            automaticAdvanceTimer = window.setTimeout(() => {
+                if (
+                    generation !== automaticAdvanceGeneration ||
+                    dualMediaPhase !== "displaying"
+                ) return;
+                advanceForegroundMedia(1);
+            }, IMAGE_AUTOPLAY_DURATION_MS);
+        }
+
         function clearMediaFace(faceIndex, resetTime = true) {
             const image = faceIndex === 0 ? dom.selectedImage : dom.nextImage;
             const video = faceIndex === 0 ? dom.selectedVideo : dom.nextVideo;
@@ -2394,6 +2448,7 @@
             video.onloadeddata = null;
             video.onloadedmetadata = null;
             video.oncanplay = null;
+            video.onended = null;
             video.onerror = null;
             video.pause();
             if (resetTime) video.currentTime = 0;
@@ -2411,6 +2466,7 @@
             return new Promise((resolve) => {
                 if (selected.type === "video") {
                     loading.textContent = "正在准备视频画面...";
+                    video.loop = false;
                     video.muted = false;
                     video.volume = 1;
                     video.src = selected.displayUrl || buildMediaUrl(selected.url);
@@ -2445,6 +2501,7 @@
 
         async function transitionForegroundMedia(index, direction = 1) {
             if (foregroundTransitionActive || mediaItems.length === 0) return false;
+            clearAutomaticAdvance();
             const normalizedIndex = ((index % mediaItems.length) + mediaItems.length) % mediaItems.length;
             const selected = mediaItems[normalizedIndex];
             const outgoingIndex = activeMediaFaceIndex;
@@ -2455,6 +2512,7 @@
             const ready = await prepareMediaFace(selected, incomingIndex);
             if (!ready) {
                 foregroundTransitionActive = false;
+                scheduleAutomaticAdvance(selectedMediaItem, outgoingIndex);
                 return false;
             }
 
@@ -2481,11 +2539,10 @@
                 selectedVideoElement = selected.type === "video"
                     ? (incomingIndex === 0 ? dom.selectedVideo : dom.nextVideo)
                     : null;
-                selectedVideoRequestId += 1;
-                if (selectedVideoElement) playSelectedVideo(selectedVideoElement, selectedVideoRequestId);
                 activeMediaFaceIndex = incomingIndex;
                 document.body.dataset.selectedMediaUrl = selected.url;
                 foregroundTransitionActive = false;
+                scheduleAutomaticAdvance(selected, incomingIndex);
             }, 640);
             return true;
         }
@@ -2578,7 +2635,7 @@
 
         function triggerCrystalMediaExtraction(screenX, screenY) {
             if (
-                dualGesturePhase !== "pinch-confirmed" ||
+                dualGesturePhase !== "open-confirmed" ||
                 dualMediaPhase !== "idle" ||
                 dualHandComboActive
             ) return false;
@@ -2593,13 +2650,13 @@
             dualReleaseStableSince = 0;
             gestureMode = "fist-media";
             pinchTarget = 0;
-            dom.gestureTitle.textContent = "双手 · 前景媒体 · 张手切换";
+            dom.gestureTitle.textContent = "双手 · 自动媒体轮播";
             dom.pinchCard.classList.add("is-active");
             dom.pinchCard.classList.remove("opacity-60");
             hideCubeCarousel();
             setCleanMode(true);
             const displayed = displaySelectedMedia(
-                selectRandomImage(),
+                mediaItems[0] || null,
                 screenX,
                 screenY
             );
@@ -2614,6 +2671,7 @@
 
         function releaseCrystalMediaExtraction() {
             if (dualMediaPhase !== "displaying") return false;
+            clearAutomaticAdvance();
             dualPinchStableSince = 0;
             dualReleaseStableSince = 0;
             dualReleaseObserved = true;
@@ -2623,11 +2681,12 @@
             dualPhaseStartedAt = performance.now();
             gestureMode = "fist-returning";
             pinchTarget = 0;
+            mediaDepthScaleTarget = 1;
             mediaReturnScreen = worldToScreen(nebulaSystem.position);
             hideSelectedImage();
             hideCubeCarousel();
             setCleanMode(false);
-            dom.gestureTitle.textContent = "握拳已松开 · 前景媒体关闭";
+            dom.gestureTitle.textContent = "双拳收回 · 素材正在回到魔方";
             dom.pinchCard.classList.remove("is-active");
             dom.pinchCard.classList.add("opacity-60");
             const returnStartedAt = dualPhaseStartedAt;
@@ -2663,8 +2722,8 @@
             dualGesturePhase = dualReleaseObserved ? "wait-control-open" : "require-reopen";
             dualPhaseStartedAt = performance.now();
             resetDualGestureSession(performance.now());
-            setFingerState(5, true);
-            dom.gestureTitle.textContent = "握拳已结束 · 可再次握拳";
+            setFingerState(0, true);
+            dom.gestureTitle.textContent = "双拳收回 · 素材已回到魔方";
         }
 
         function triggerBurst() {
@@ -2969,6 +3028,7 @@
             dualPinchStableSince = 0;
             dualReleaseStableSince = 0;
             dualRoleLostSince = 0;
+            dualExitFistsStableSince = 0;
             dualPinchLatched = false;
             dualHandComboActive = false;
             dualPinchRearmReady = false;
@@ -2979,6 +3039,7 @@
             dualSingleHandLockUntil = now + 900;
             pinchArmed = false;
             dualControlMode = "idle";
+            mediaDepthScaleTarget = 1;
             clearDigitOverlay();
             clearDualControlMotion();
         }
@@ -3129,6 +3190,43 @@
             document.body.dataset.mediaFollowX = mediaFollowTarget.x.toFixed(1);
             document.body.dataset.mediaFollowY = mediaFollowTarget.y.toFixed(1);
             return mediaFollowTarget;
+        }
+
+        function updateMediaDepthFromOpenPalm(hand) {
+            const palm = getPalmCenter(hand.landmarks);
+            mediaDepthScaleTarget = getPalmDepthScale({
+                palmSize: hand.metrics.palmSize || 0.2,
+                palmZ: palm.z
+            });
+            document.body.dataset.mediaDepthScaleTarget =
+                mediaDepthScaleTarget.toFixed(3);
+            return mediaDepthScaleTarget;
+        }
+
+        function getPalmDepthScale({ palmSize, palmZ }) {
+            const apparentSize = THREE.MathUtils.clamp(palmSize, 0.1, 0.36);
+            const sizeT = THREE.MathUtils.clamp(
+                (apparentSize - 0.1) / 0.26,
+                0,
+                1
+            );
+            const depthOffset = THREE.MathUtils.clamp(
+                palmZ * 0.45,
+                -0.12,
+                0.12
+            );
+            return THREE.MathUtils.clamp(
+                THREE.MathUtils.lerp(1.18, 0.68, sizeT) - depthOffset,
+                0.62,
+                1.22
+            );
+        }
+
+        function areBothHandsFists(hands) {
+            return hands.length >= 2 &&
+                hands.slice(0, 2).every(
+                    (hand) => hand.fistLike ?? isFistLike(hand)
+                );
         }
 
         function getDualReopenGate({
@@ -3520,6 +3618,19 @@
 
         function updateDualHandGestures(hands) {
             const now = performance.now();
+
+            if (dualMediaPhase === "displaying" && areBothHandsFists(hands)) {
+                if (!dualExitFistsStableSince) dualExitFistsStableSince = now;
+                if (
+                    now - dualExitFistsStableSince >=
+                    DUAL_FIST_EXIT_HOLD_MS
+                ) {
+                    releaseCrystalMediaExtraction();
+                }
+                return true;
+            }
+            dualExitFistsStableSince = 0;
+
             const { fist, control } = findDualHandRoles(hands);
 
             if (fist) {
@@ -3537,22 +3648,19 @@
                 }
 
                 const openPalm = Boolean(control && isStrictOpenPalm(control));
-                const intentionalPinch = Boolean(control && isIntentionalDualPinch(control));
                 if (control) dualPinchHandKey = control.handKey;
                 document.body.dataset.dualFistHand = fist.handedness;
                 document.body.dataset.dualControlOpen = String(openPalm);
-                document.body.dataset.dualIntentionalPinch = String(intentionalPinch);
 
                 if (dualMediaPhase === "displaying") {
                     if (openPalm) {
-                        const motion = sampleControlPalm(control, now);
-                        updateForegroundFollowFromPalm(control);
-                        handleForegroundMediaSwipe(control, now, motion);
-                        dualControlMode = "foreground-follow";
-                        dom.gestureTitle.textContent = "左拳保持 · 右掌跟随与左右切换";
+                        updateMediaDepthFromOpenPalm(control);
+                        dualControlMode = "depth-zoom";
+                        dom.gestureTitle.textContent =
+                            "自动轮播 · 五掌控制远近";
                     } else {
-                        clearDualControlMotion();
-                        dom.gestureTitle.textContent = "右手暂离 · 画面保持播放";
+                        dom.gestureTitle.textContent =
+                            "自动轮播 · 当前媒体继续播放";
                     }
                     return true;
                 }
@@ -3564,43 +3672,31 @@
                     return true;
                 }
 
-                if (intentionalPinch) {
-                    dualOpenStableSince = 0;
-                    if (!dualPinchStableSince) {
-                        dualPinchStableSince = now;
-                        setDualGesturePhase("pinch-closing", now);
-                    }
-                    if (now - dualPinchStableSince >= DUAL_PINCH_HOLD_MS) {
-                        setDualGesturePhase("pinch-confirmed", now);
-                        const screenX = (1 - control.pinchCenter.x) * window.innerWidth;
-                        const screenY = control.pinchCenter.y * window.innerHeight;
+                if (openPalm) {
+                    updateMediaDepthFromOpenPalm(control);
+                    if (!dualOpenStableSince) dualOpenStableSince = now;
+                    if (now - dualOpenStableSince >= DUAL_OPEN_HOLD_MS) {
+                        setDualGesturePhase("open-confirmed", now);
                         triggerCrystalMediaExtraction(
-                            screenX,
-                            screenY
+                            window.innerWidth * 0.5,
+                            window.innerHeight * 0.5
                         );
                     }
                 } else {
                     dualOpenStableSince = 0;
-                    dualPinchStableSince = 0;
                     clearDualControlMotion();
-                    setDualGesturePhase("wait-control-pinch", now);
-                    dom.gestureTitle.textContent = "左手握拳 · 另一手食指拇指捏合开启";
+                    setDualGesturePhase("wait-control-open", now);
+                    dom.gestureTitle.textContent =
+                        "左手握拳 · 另一手张开五掌开启自动轮播";
                 }
                 return true;
             }
 
             if (!dualRoleLostSince) dualRoleLostSince = now;
+            if (dualMediaPhase === "displaying") return true;
             if (
-                dualMediaPhase === "displaying" &&
-                now - dualRoleLostSince < DUAL_ROLE_LOST_MS
-            ) {
-                return true;
-            }
-            if (dualMediaPhase === "displaying") {
-                releaseCrystalMediaExtraction();
-                return true;
-            }
-            if (dualMediaPhase === "returning") return true;
+                dualMediaPhase === "returning"
+            ) return true;
             if (
                 dualGesturePhase !== "idle" &&
                 now - dualRoleLostSince >= DUAL_ROLE_LOST_MS
@@ -3746,12 +3842,29 @@
 
             const ease = imageTransition * imageTransition * (3 - 2 * imageTransition);
             const isReturningToCrystal = dualMediaPhase === "returning";
+            if (
+                dualMediaPhase === "displaying" &&
+                imageTransition >= 0.995 &&
+                !foregroundTransitionActive &&
+                selectedMediaItem &&
+                automaticScheduledMediaUrl !== selectedMediaItem.url &&
+                document.body.dataset.mediaPreviewReady === "true"
+            ) {
+                scheduleAutomaticAdvance(
+                    selectedMediaItem,
+                    activeMediaFaceIndex
+                );
+            }
+            mediaDepthScaleCurrent +=
+                (mediaDepthScaleTarget - mediaDepthScaleCurrent) *
+                (1 - Math.exp(-delta * 7));
             const targetPosition = isReturningToCrystal
                 ? nebulaSystem.position.clone()
                 : new THREE.Vector3(0, Math.sin(time * 0.78) * 0.45, 18);
             if (isReturningToCrystal) targetPosition.z = 18;
             selectedImageGroup.position.lerp(targetPosition, 0.105);
-            const scale = THREE.MathUtils.lerp(0.04, 1, ease);
+            const scale = THREE.MathUtils.lerp(0.04, 1, ease) *
+                mediaDepthScaleCurrent;
             selectedImageGroup.scale.setScalar(scale);
             selectedImageGroup.rotation.y = Math.sin(time * 0.55) * 0.055 * ease;
             selectedImageGroup.rotation.x = Math.cos(time * 0.43) * 0.025 * ease;
@@ -3774,11 +3887,12 @@
             const previewX = THREE.MathUtils.lerp(previewOrigin.x, targetX, ease);
             const previewY = THREE.MathUtils.lerp(previewOrigin.y, targetY, ease);
             const previewScale = THREE.MathUtils.lerp(0.04, 1, ease);
+            const controlledScale = previewScale * mediaDepthScaleCurrent;
             dom.mediaPreview.style.left = `${previewX}px`;
             dom.mediaPreview.style.top = `${previewY}px`;
             dom.mediaPreview.style.opacity = ease.toFixed(3);
             dom.mediaPreview.style.transform =
-                `translate(-50%, -50%) scale(${previewScale}) rotateY(${Math.sin(time * 0.55) * 2.2 * ease}deg)`;
+                `translate(-50%, -50%) scale(${controlledScale}) rotateY(${Math.sin(time * 0.55) * 2.2 * ease}deg)`;
         }
 
         function animate() {
@@ -3943,38 +4057,36 @@
         });
 
         document.getElementById("manual-pinch-btn").addEventListener("click", () => {
-            if (gestureState !== 0) {
-                showToast("请先模拟握拳，再模拟捏合");
-                return;
-            }
-            if (dualMediaPhase === "idle") {
-                setDualGesturePhase("pinch-confirmed");
-                triggerCrystalMediaExtraction(window.innerWidth * 0.62, window.innerHeight * 0.56);
-            }
+            showToast("自动轮播不再使用捏合，请使用握拳＋五掌");
         });
 
         document.getElementById("manual-dual-btn").addEventListener("click", () => {
             if (gestureState !== 0) setFingerState(0);
             if (dualMediaPhase === "displaying") {
-                dualPinchPresent = false;
-                releaseCrystalMediaExtraction();
+                showToast("自动轮播已开启；双拳可收回魔方");
                 return;
             }
             if (dualMediaPhase === "idle") {
-                setDualGesturePhase("pinch-confirmed");
-                triggerCrystalMediaExtraction(window.innerWidth * 0.62, window.innerHeight * 0.56);
+                setDualGesturePhase("open-confirmed");
+                triggerCrystalMediaExtraction(
+                    window.innerWidth * 0.5,
+                    window.innerHeight * 0.5
+                );
             }
         });
 
         document.getElementById("manual-swipe-btn").addEventListener("click", () => {
             if (gestureState !== 0) setFingerState(0);
             if (dualMediaPhase !== "displaying") {
-                setDualGesturePhase("pinch-confirmed");
+                setDualGesturePhase("open-confirmed");
                 triggerCrystalMediaExtraction(window.innerWidth * 0.5, window.innerHeight * 0.5);
             } else {
-                advanceForegroundMedia(1);
+                mediaDepthScaleTarget = mediaDepthScaleTarget > 0.9
+                    ? 0.68
+                    : 1.18;
             }
-            dom.gestureTitle.textContent = "手动 · 下一项立方切换";
+            dom.gestureTitle.textContent =
+                `手动远近 · ${mediaDepthScaleTarget > 0.9 ? "拉近" : "推远"}`;
         });
 
         dom.soundToggleBtn.addEventListener("click", () => {
@@ -4110,21 +4222,31 @@
                 },
                 simulateDualCombo: () => {
                     if (gestureState !== 0) setFingerState(0);
-                    setDualGesturePhase("pinch-confirmed");
+                    setDualGesturePhase("open-confirmed");
                     return triggerCrystalMediaExtraction(
-                        window.innerWidth * 0.62,
-                        window.innerHeight * 0.56
+                        window.innerWidth * 0.5,
+                        window.innerHeight * 0.5
                     );
                 },
                 simulateOpenPalmSwipe: (direction = 1) => {
-                    if (gestureState !== 0) setFingerState(0);
                     if (dualMediaPhase !== "displaying") return false;
-                    return advanceForegroundMedia(Number(direction));
+                    mediaDepthScaleTarget = Number(direction) >= 0
+                        ? 1.18
+                        : 0.68;
+                    return mediaDepthScaleTarget;
+                },
+                simulateDepth: (scale = 1) => {
+                    mediaDepthScaleTarget = THREE.MathUtils.clamp(
+                        Number(scale),
+                        0.62,
+                        1.22
+                    );
+                    return mediaDepthScaleTarget;
                 },
                 releaseDualPinch: () => {
-                    dualPinchPresent = false;
-                    releaseCrystalMediaExtraction();
+                    return releaseCrystalMediaExtraction();
                 },
+                simulateDoubleFist: () => releaseCrystalMediaExtraction(),
                 enableSound: () => {
                     setSoundEnabled(true);
                     return selectedVideoElement ? !selectedVideoElement.muted : false;

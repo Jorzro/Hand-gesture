@@ -154,8 +154,8 @@ assert.ok(
     "thumbnail orbit must have independent inertial velocity"
 );
 assert.ok(
-    html.includes('dualGesturePhase !== "pinch-confirmed"'),
-    "media extraction must require a confirmed fist-plus-pinch gesture"
+    html.includes('dualGesturePhase !== "open-confirmed"'),
+    "media extraction must require a confirmed fist-plus-open-palm gesture"
 );
 assert.ok(
     html.includes("let dualReleaseObserved = false;"),
@@ -233,7 +233,7 @@ assert.match(
 assert.match(
     html,
     /function triggerCrystalMediaExtraction\([\s\S]*?displaySelectedMedia\(/,
-    "left fist plus control-hand pinch must use the clear foreground media renderer"
+    "left fist plus open palm must use the clear foreground media renderer"
 );
 assert.ok(
     html.includes('id="media-cube-stage"') &&
