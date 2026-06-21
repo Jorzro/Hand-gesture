@@ -350,7 +350,7 @@
                     <span class="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_14px_#00f0ff]"></span>
                     <h1 class="text-sm font-black tracking-[0.2em] text-white">WEIMETA NEBULA</h1>
                 </div>
-                <p class="mt-1 text-[9px] uppercase tracking-[0.22em] text-slate-500">Fist + pinch media carousel</p>
+                <p class="mt-1 text-[9px] uppercase tracking-[0.22em] text-slate-500">Fist + open-palm auto carousel</p>
             </div>
 
             <div class="glass flex items-center gap-4 rounded-2xl px-4 py-3 text-right">
@@ -2722,6 +2722,8 @@
             dualGesturePhase = dualReleaseObserved ? "wait-control-open" : "require-reopen";
             dualPhaseStartedAt = performance.now();
             resetDualGestureSession(performance.now());
+            handLastSeenAt = 0;
+            handResetApplied = true;
             setFingerState(0, true);
             dom.gestureTitle.textContent = "双拳收回 · 素材已回到魔方";
         }
@@ -2736,8 +2738,10 @@
         }
 
         function setFingerState(state, suppressBurst = false) {
-            if (gestureState === state && gestureMode !== "pinch") return;
-            gestureMode = state === 0 ? "fist" : state === 5 ? "open" : `finger-${state}`;
+            const nextGestureMode =
+                state === 0 ? "fist" : state === 5 ? "open" : `finger-${state}`;
+            if (gestureState === state && gestureMode === nextGestureMode) return;
+            gestureMode = nextGestureMode;
             pinchTarget = 0;
             beginParticleTransition(state);
             hideSelectedImage();
@@ -3946,17 +3950,15 @@
                 nebulaSystem.position.x *= 0.965;
                 nebulaSystem.position.y *= 0.965;
                 if (
+                    dualMediaPhase === "idle" &&
                     handLastSeenAt > 0 &&
                     performance.now() - handLastSeenAt > HAND_LOST_RESET_DELAY &&
-                    !handResetApplied &&
-                    dualMediaPhase !== "returning"
+                    !handResetApplied
                 ) {
                     handResetApplied = true;
                     pinchArmed = true;
                     singleGestureCandidate = null;
                     singleGestureStableFrames = 0;
-                    hideSelectedImage();
-                    dualMediaPhase = "idle";
                     resetDualGestureSession();
                     setFingerState(5, true);
                 }

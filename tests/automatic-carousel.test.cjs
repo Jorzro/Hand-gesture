@@ -55,6 +55,41 @@ assert.doesNotMatch(
     "the open palm must not drag the carousel around the screen"
 );
 
+const animateSource = html.slice(
+    html.indexOf("function animate()"),
+    html.indexOf("dom.colorPicker.addEventListener")
+);
+assert.doesNotMatch(
+    animateSource,
+    /dualMediaPhase\s*=\s*"idle"/,
+    "generic hand-loss reset must not terminate automatic playback"
+);
+assert.match(
+    animateSource,
+    /dualMediaPhase === "idle"[\s\S]*?handResetApplied = true/,
+    "generic hand-loss reset may run only while no carousel is active"
+);
+
+const returnSource = html.slice(
+    html.indexOf("function completeCrystalMediaReturn()"),
+    html.indexOf("function triggerBurst()")
+);
+assert.match(
+    returnSource,
+    /handLastSeenAt = 0;[\s\S]*?handResetApplied = true;[\s\S]*?setFingerState\(0, true\)/,
+    "double-fist return must preserve the fist cube after hands leave the camera"
+);
+
+const fingerStateSource = html.slice(
+    html.indexOf("function setFingerState("),
+    html.indexOf("function distance3D(")
+);
+assert.match(
+    fingerStateSource,
+    /const nextGestureMode =[\s\S]*?gestureMode === nextGestureMode[\s\S]*?gestureMode = nextGestureMode/,
+    "returning to an existing particle state must still normalize its gesture mode"
+);
+
 const transitionSource = html.slice(
     html.indexOf("async function transitionForegroundMedia("),
     html.indexOf("function hideSelectedImage(")
