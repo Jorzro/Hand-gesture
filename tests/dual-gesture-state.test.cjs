@@ -225,25 +225,20 @@ assert.doesNotMatch(
     /setDigitOverlay\(/,
     "two-hand fist control must not compete with numeric overlays"
 );
-assert.match(
+assert.doesNotMatch(
     dualUpdateSource,
     /handleForegroundMediaSwipe\(/,
-    "an open control palm must switch foreground media"
+    "an open control palm must not manually switch automatic media"
 );
 assert.match(
     dualUpdateSource,
-    /updateForegroundFollowFromPalm\(/,
-    "an open control palm must move the foreground carousel"
-);
-assert.match(
-    dualUpdateSource,
-    /pinch-confirmed[\s\S]*?triggerCrystalMediaExtraction/,
-    "foreground carousel entry must require a confirmed control-hand pinch"
+    /dualOpenStableSince[\s\S]*?triggerCrystalMediaExtraction/,
+    "a stable fist plus open palm must start automatic playback"
 );
 assert.doesNotMatch(
     dualUpdateSource,
-    /setDualGesturePhase\("open-confirmed"[\s\S]*?triggerCrystalMediaExtraction/,
-    "an open control palm must not directly trigger the foreground carousel"
+    /pinch-confirmed[\s\S]*?triggerCrystalMediaExtraction/,
+    "automatic playback must not require a pinch"
 );
 
 const extractionSource = html.slice(
@@ -253,7 +248,7 @@ const extractionSource = html.slice(
 assert.match(
     extractionSource,
     /displaySelectedMedia\(/,
-    "left fist plus control-hand pinch must show original media in the foreground"
+    "left fist plus open palm must show original media in the foreground"
 );
 assert.doesNotMatch(
     extractionSource,
