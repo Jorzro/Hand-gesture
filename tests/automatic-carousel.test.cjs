@@ -99,6 +99,15 @@ assert.match(
     /scheduleAutomaticAdvance\(selected, incomingIndex\)/,
     "automatic timing must start only after the incoming face is centered"
 );
+assert.match(
+    html,
+    /showMediaByType: \(type\) => \{[\s\S]*?clearAutomaticAdvance\(\);[\s\S]*?displaySelectedMedia\(selected,[\s\S]*?\)/,
+    "manual QA must be able to force a specific image or video without an old autoplay timer taking it back"
+);
+assert.ok(
+    html.includes("get mediaDepthScaleCurrent()"),
+    "manual QA must expose current depth scale so open-palm zoom can be verified directly"
+);
 
 const getPalmDepthScale = loadFunction(
     "getPalmDepthScale",

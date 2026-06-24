@@ -28,6 +28,43 @@ assert.equal(
     6000,
     "all foreground states must use exactly 6,000 particles"
 );
+assert.ok(
+    numericConstant("SHAPE_TRANSITION_DURATION") >= 1.6,
+    "particle morphing must be slow enough to read as fluid instead of snapping"
+);
+assert.match(
+    html,
+    /gl_PointSize = vVisible \* clamp\(aSize \* \(1(?:2[8-9]|[3-9][0-9])\.0 \/ -mvPosition\.z\), 0\.(?:7|8|9)[0-9], 6\.[2-9]\);/,
+    "6,000 foreground particles must render larger and brighter enough to stay visible"
+);
+assert.match(
+    html,
+    /sizes\[index\] = seed > 0\.9[0-9] \? 3\.[0-9]+ \+ Math\.random\(\) \* 0\.[0-9]+ : 1\.[0-9]+ \+ Math\.random\(\) \* 1\.[0-9]+;/,
+    "foreground particle size distribution must compensate for the reduced particle count"
+);
+assert.match(
+    html,
+    /const bloom = new THREE\.UnrealBloomPass\([\s\S]*?0\.(?:7|8)[0-9],[\s\S]*?0\.(?:5|6)[0-9],[\s\S]*?0\.4[0-9][\s\S]*?\);/,
+    "Bloom must be stronger but still thresholded so particles read without washing out text"
+);
+assert.ok(
+    html.includes("float smootherStep(float t)") &&
+        html.includes("vec3 curlRibbon") &&
+        html.includes("float flowSpeed"),
+    "particle shader must use smoother easing and layered curl flow instead of a flat orbit"
+);
+assert.ok(
+    html.includes("const vec2 BLUE_HUE_RANGE = vec2(0.515, 0.625)") &&
+        html.includes("uGestureState < 4.5") &&
+        html.includes("uBurstStrength > 0.001"),
+    "normal particle states must stay in royal/electric blue while burst mode keeps vivid mixed colors"
+);
+assert.ok(
+    html.includes("vec3 electricCyan = vec3(0.0, 0.94, 1.0);") &&
+        html.includes("vec3 royalBlue = vec3(0.08, 0.18, 0.95);") &&
+        html.includes("vec3 deepRoyalBlue = vec3(0.015, 0.055, 0.22);"),
+    "normal particle colors must use a direct electric-cyan/royal-blue RGB palette, not a drifting rainbow hue"
+);
 assert.equal(
     numericConstant("MINI_MEDIA_COUNT"),
     12,
