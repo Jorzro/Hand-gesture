@@ -936,6 +936,11 @@
         let activeHandCount = 0;
         let soundEnabled = true;
         let soundAutoplayBlocked = false;
+        let gestureAudioContext = null;
+        let lastGestureSoundAt = 0;
+        let lastGestureSoundName = "";
+        let gestureSoundCount = 0;
+        let suppressNextGestureSound = false;
         let handLastSeenAt = 0;
         let handResetApplied = false;
         let lastPinchScreen = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
@@ -967,6 +972,35 @@
         const imageTextures = [];
         const mediaPreviewTextures = [];
         const imageUrls = [];
+        const GESTURE_SOUND_PROFILES = {
+            fist: [
+                { frequency: 132, duration: 0.095, delay: 0, type: "triangle", gain: 0.042 },
+                { frequency: 198, duration: 0.075, delay: 0.035, type: "sine", gain: 0.028 }
+            ],
+            open: [
+                { frequency: 520, duration: 0.07, delay: 0, type: "sine", gain: 0.032 },
+                { frequency: 760, duration: 0.08, delay: 0.045, type: "triangle", gain: 0.026 },
+                { frequency: 1040, duration: 0.09, delay: 0.09, type: "sine", gain: 0.02 }
+            ],
+            finger: [
+                { frequency: 380, duration: 0.06, delay: 0, type: "sine", gain: 0.025 },
+                { frequency: 570, duration: 0.055, delay: 0.04, type: "sine", gain: 0.018 }
+            ],
+            carouselStart: [
+                { frequency: 240, duration: 0.12, delay: 0, type: "triangle", gain: 0.04 },
+                { frequency: 480, duration: 0.14, delay: 0.07, type: "sine", gain: 0.032 },
+                { frequency: 720, duration: 0.16, delay: 0.14, type: "sine", gain: 0.024 }
+            ],
+            mediaNext: [
+                { frequency: 660, duration: 0.055, delay: 0, type: "sine", gain: 0.024 },
+                { frequency: 880, duration: 0.065, delay: 0.045, type: "triangle", gain: 0.018 }
+            ],
+            return: [
+                { frequency: 520, duration: 0.085, delay: 0, type: "triangle", gain: 0.034 },
+                { frequency: 320, duration: 0.12, delay: 0.055, type: "sine", gain: 0.026 },
+                { frequency: 180, duration: 0.15, delay: 0.13, type: "sine", gain: 0.018 }
+            ]
+        };
 
         const dom = {
             loadingMask: document.getElementById("loading-mask"),
@@ -2262,6 +2296,63 @@
             updateSoundButton();
         }
 
+        function getGestureSoundProfile(name) {
+            return GESTURE_SOUND_PROFILES[name] || GESTURE_SOUND_PROFILES.finger;
+        }
+
+        function getGestureAudioContext() {
+            const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContextCtor) return null;
+            if (!gestureAudioContext) {
+                gestureAudioContext = new AudioContextCtor();
+            }
+            if (gestureAudioContext.state === "suspended") {
+                gestureAudioContext.resume().catch(() => {});
+            }
+            return gestureAudioContext;
+        }
+
+        function primeGestureAudio() {
+            if (!soundEnabled) return false;
+            return Boolean(getGestureAudioContext());
+        }
+
+        function playGestureSound(name) {
+            if (!soundEnabled) return false;
+            const now = performance.now();
+            if (now - lastGestureSoundAt < 70) return false;
+            const audioContext = getGestureAudioContext();
+            if (!audioContext) return false;
+            lastGestureSoundAt = now;
+            lastGestureSoundName = name;
+            gestureSoundCount += 1;
+            const startAt = audioContext.currentTime + 0.012;
+            getGestureSoundProfile(name).forEach((tone) => {
+                const Oscillator = audioContext.createOscillator();
+                const Gain = audioContext.createGain();
+                Oscillator.type = tone.type || "sine";
+                Oscillator.frequency.setValueAtTime(tone.frequency, startAt + tone.delay);
+                Oscillator.frequency.exponentialRampToValueAtTime(
+                    Math.max(40, tone.frequency * 0.72),
+                    startAt + tone.delay + tone.duration
+                );
+                Gain.gain.setValueAtTime(0.0001, startAt + tone.delay);
+                Gain.gain.exponentialRampToValueAtTime(
+                    tone.gain,
+                    startAt + tone.delay + 0.012
+                );
+                Gain.gain.exponentialRampToValueAtTime(
+                    0.0001,
+                    startAt + tone.delay + tone.duration
+                );
+                Oscillator.connect(Gain);
+                Gain.connect(audioContext.destination);
+                Oscillator.start(startAt + tone.delay);
+                Oscillator.stop(startAt + tone.delay + tone.duration + 0.03);
+            });
+            return true;
+        }
+
         function playSelectedVideo(videoElement, requestId) {
             if (!videoElement) return;
             videoElement.muted = false;
@@ -2422,6 +2513,30 @@
             return displaySelectedMedia(selectRandomImage(), screenX, screenY);
         }
 
+        function getAutomaticMediaOrder(items) {
+            return [...items].sort((left, right) => {
+                if (left.type !== right.type) {
+                    return left.type === "video" ? -1 : 1;
+                }
+                return left.index - right.index;
+            });
+        }
+
+        function getInitialAutomaticMedia(items) {
+            return getAutomaticMediaOrder(items)[0] || null;
+        }
+
+        function getNextAutomaticMedia(items, current, direction = 1) {
+            const orderedItems = getAutomaticMediaOrder(items);
+            if (orderedItems.length === 0) return null;
+            const currentPosition = orderedItems.indexOf(current);
+            const safePosition = currentPosition >= 0 ? currentPosition : 0;
+            const step = direction >= 0 ? 1 : -1;
+            const nextPosition =
+                (safePosition + step + orderedItems.length) % orderedItems.length;
+            return orderedItems[nextPosition];
+        }
+
         function showForegroundMediaAtIndex(index) {
             if (mediaItems.length === 0) return false;
             const normalizedIndex =
@@ -2436,8 +2551,8 @@
 
         function advanceForegroundMedia(direction) {
             if (dualMediaPhase !== "displaying" || mediaItems.length === 0) return false;
-            const currentIndex = Math.max(0, mediaItems.indexOf(selectedMediaItem));
-            return transitionForegroundMedia(currentIndex + (direction >= 0 ? 1 : -1), direction);
+            const selected = getNextAutomaticMedia(mediaItems, selectedMediaItem, direction);
+            return transitionForegroundMediaByItem(selected, direction);
         }
 
         function clearAutomaticAdvance() {
@@ -2545,10 +2660,13 @@
         }
 
         async function transitionForegroundMedia(index, direction = 1) {
-            if (foregroundTransitionActive || mediaItems.length === 0) return false;
-            clearAutomaticAdvance();
             const normalizedIndex = ((index % mediaItems.length) + mediaItems.length) % mediaItems.length;
-            const selected = mediaItems[normalizedIndex];
+            return transitionForegroundMediaByItem(mediaItems[normalizedIndex], direction);
+        }
+
+        async function transitionForegroundMediaByItem(selected, direction = 1) {
+            if (foregroundTransitionActive || mediaItems.length === 0 || !selected) return false;
+            clearAutomaticAdvance();
             const outgoingIndex = activeMediaFaceIndex;
             const incomingIndex = outgoingIndex === 0 ? 1 : 0;
             const outgoingFace = outgoingIndex === 0 ? dom.mediaFaceCurrent : dom.mediaFaceNext;
@@ -2587,6 +2705,7 @@
                 activeMediaFaceIndex = incomingIndex;
                 document.body.dataset.selectedMediaUrl = selected.url;
                 foregroundTransitionActive = false;
+                playGestureSound("mediaNext");
                 scheduleAutomaticAdvance(selected, incomingIndex);
             }, 640);
             return true;
@@ -2701,7 +2820,7 @@
             hideCubeCarousel();
             setCleanMode(true);
             const displayed = displaySelectedMedia(
-                mediaItems[0] || null,
+                getInitialAutomaticMedia(mediaItems),
                 screenX,
                 screenY
             );
@@ -2710,12 +2829,15 @@
                 dualMediaPhase = "idle";
                 dualGesturePhase = "require-reopen";
                 dualPinchRearmReady = false;
+            } else {
+                playGestureSound("carouselStart");
             }
             return displayed;
         }
 
         function releaseCrystalMediaExtraction() {
             if (dualMediaPhase !== "displaying") return false;
+            playGestureSound("return");
             clearAutomaticAdvance();
             dualPinchStableSince = 0;
             dualReleaseStableSince = 0;
@@ -2769,6 +2891,7 @@
             resetDualGestureSession(performance.now());
             handLastSeenAt = 0;
             handResetApplied = true;
+            suppressNextGestureSound = true;
             setFingerState(0, true);
             dom.gestureTitle.textContent = "双拳收回 · 素材已回到魔方";
         }
@@ -2785,11 +2908,18 @@
         function setFingerState(state, suppressBurst = false) {
             const nextGestureMode =
                 state === 0 ? "fist" : state === 5 ? "open" : `finger-${state}`;
+            const shouldSuppressGestureSound = suppressNextGestureSound;
+            suppressNextGestureSound = false;
             if (gestureState === state && gestureMode === nextGestureMode) return;
             gestureMode = nextGestureMode;
             pinchTarget = 0;
             beginParticleTransition(state);
             hideSelectedImage();
+            if (!shouldSuppressGestureSound) {
+                playGestureSound(
+                    state === 0 ? "fist" : state === 5 ? "open" : "finger"
+                );
+            }
             if (state === 5 && !suppressBurst) {
                 triggerBurst();
             } else {
@@ -4141,6 +4271,7 @@
         dom.soundToggleBtn.addEventListener("click", () => {
             const shouldEnable = !soundEnabled || (selectedVideoElement && selectedVideoElement.muted);
             setSoundEnabled(Boolean(shouldEnable));
+            if (shouldEnable) primeGestureAudio();
             if (shouldEnable) showToast("视频声音已开启");
         });
 
@@ -4203,12 +4334,14 @@
         });
 
         dom.startBtn.addEventListener("click", () => {
+            primeGestureAudio();
             dom.startBtn.disabled = true;
             dom.startBtn.textContent = "正在启动...";
             initMediaPipe();
         });
 
         dom.manualStartBtn.addEventListener("click", () => {
+            primeGestureAudio();
             dom.loadingMask.style.display = "none";
             dom.handStatus.textContent = "MANUAL";
             dom.handStatus.className = "text-cyan-300";
@@ -4242,6 +4375,8 @@
                 get selectedVideoPaused() { return selectedVideoElement ? selectedVideoElement.paused : true; },
                 get selectedVideoMuted() { return selectedVideoElement ? selectedVideoElement.muted : true; },
                 get soundAutoplayBlocked() { return soundAutoplayBlocked; },
+                get lastGestureSoundName() { return lastGestureSoundName; },
+                get gestureSoundCount() { return gestureSoundCount; },
                 get dualHandComboActive() { return dualHandComboActive; },
                 get dualMediaPhase() { return dualMediaPhase; },
                 get dualGesturePhase() { return dualGesturePhase; },

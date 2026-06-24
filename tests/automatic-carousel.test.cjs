@@ -18,6 +18,21 @@ function loadFunction(name, nextName, globals = {}) {
     )(...Object.values(globals));
 }
 
+function loadAutomaticMediaHelpers() {
+    const start = html.indexOf("function getAutomaticMediaOrder(");
+    const end = html.indexOf("function showForegroundMediaAtIndex(", start);
+    assert.ok(start >= 0, "missing automatic media order helpers");
+    assert.ok(end > start, "missing boundary after automatic media order helpers");
+    return Function(`
+        ${html.slice(start, end)}
+        return {
+            getAutomaticMediaOrder,
+            getInitialAutomaticMedia,
+            getNextAutomaticMedia
+        };
+    `)();
+}
+
 assert.match(
     html,
     /const IMAGE_AUTOPLAY_DURATION_MS = 3000;/,
@@ -101,12 +116,50 @@ assert.match(
 );
 assert.match(
     html,
+    /function triggerCrystalMediaExtraction\([\s\S]*?getInitialAutomaticMedia\(mediaItems\)/,
+    "automatic carousel must start from the prioritized media queue"
+);
+assert.match(
+    html,
+    /function advanceForegroundMedia\([\s\S]*?getNextAutomaticMedia\(mediaItems, selectedMediaItem, direction\)/,
+    "automatic carousel must keep advancing through the prioritized media queue"
+);
+assert.match(
+    html,
     /showMediaByType: \(type\) => \{[\s\S]*?clearAutomaticAdvance\(\);[\s\S]*?displaySelectedMedia\(selected,[\s\S]*?\)/,
     "manual QA must be able to force a specific image or video without an old autoplay timer taking it back"
 );
 assert.ok(
     html.includes("get mediaDepthScaleCurrent()"),
     "manual QA must expose current depth scale so open-palm zoom can be verified directly"
+);
+
+const automaticMedia = loadAutomaticMediaHelpers();
+const sampleItems = [
+    { type: "image", index: 0, url: "image-0.jpg" },
+    { type: "video", index: 9, url: "video-9.mp4" },
+    { type: "image", index: 1, url: "image-1.jpg" },
+    { type: "video", index: 10, url: "video-10.mp4" }
+];
+assert.deepEqual(
+    automaticMedia.getAutomaticMediaOrder(sampleItems).map((item) => item.url),
+    ["video-9.mp4", "video-10.mp4", "image-0.jpg", "image-1.jpg"],
+    "automatic carousel must play videos first, then images"
+);
+assert.equal(
+    automaticMedia.getInitialAutomaticMedia(sampleItems).url,
+    "video-9.mp4",
+    "automatic carousel must start with the first available video"
+);
+assert.equal(
+    automaticMedia.getNextAutomaticMedia(sampleItems, sampleItems[3], 1).url,
+    "image-0.jpg",
+    "automatic carousel must continue to images after the prioritized videos finish"
+);
+assert.equal(
+    automaticMedia.getNextAutomaticMedia(sampleItems, sampleItems[0], -1).url,
+    "video-10.mp4",
+    "reverse direction must also follow the prioritized media queue"
 );
 
 const getPalmDepthScale = loadFunction(

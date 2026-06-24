@@ -65,6 +65,69 @@ assert.ok(
         html.includes("vec3 deepRoyalBlue = vec3(0.015, 0.055, 0.22);"),
     "normal particle colors must use a direct electric-cyan/royal-blue RGB palette, not a drifting rainbow hue"
 );
+assert.ok(
+    html.includes("const GESTURE_SOUND_PROFILES = {") &&
+        html.includes("fist:") &&
+        html.includes("open:") &&
+        html.includes("carouselStart:") &&
+        html.includes("mediaNext:") &&
+        html.includes("return:"),
+    "gesture interactions must define distinct built-in sound cues without external files"
+);
+assert.match(
+    html,
+    /function playGestureSound\(name\)[\s\S]*?AudioContext[\s\S]*?Oscillator[\s\S]*?Gain/,
+    "gesture sounds must use Web Audio so no extra audio assets are required"
+);
+assert.ok(
+    html.includes("function primeGestureAudio("),
+    "gesture audio must be primed from a user click before camera-driven gestures fire"
+);
+assert.match(
+    html,
+    /dom\.startBtn\.addEventListener\("click"[\s\S]*?primeGestureAudio\(\)/,
+    "camera start click must unlock gesture audio"
+);
+assert.match(
+    html,
+    /dom\.manualStartBtn\.addEventListener\("click"[\s\S]*?primeGestureAudio\(\)/,
+    "manual start click must unlock gesture audio for local QA"
+);
+assert.match(
+    html,
+    /dom\.soundToggleBtn\.addEventListener\("click"[\s\S]*?primeGestureAudio\(\)/,
+    "sound toggle must re-prime gesture audio when sound is enabled"
+);
+assert.match(
+    html,
+    /function setFingerState\([\s\S]*?playGestureSound\([\s\S]*?state === 0[\s\S]*?"fist"[\s\S]*?state === 5[\s\S]*?"open"[\s\S]*?"finger"[\s\S]*?\)/,
+    "single gesture state changes must play matching gesture sounds"
+);
+assert.match(
+    html,
+    /function triggerCrystalMediaExtraction\([\s\S]*?playGestureSound\("carouselStart"\)/,
+    "starting the automatic carousel must play a start sound"
+);
+assert.match(
+    html,
+    /async function transitionForegroundMedia\([\s\S]*?playGestureSound\("mediaNext"\)/,
+    "automatic media changes must play a transition sound"
+);
+assert.match(
+    html,
+    /function releaseCrystalMediaExtraction\([\s\S]*?playGestureSound\("return"\)/,
+    "double-fist return must play a return sound"
+);
+assert.match(
+    html,
+    /function completeCrystalMediaReturn\([\s\S]*?suppressNextGestureSound = true;[\s\S]*?setFingerState\(0, true\)/,
+    "completing the return animation must not overwrite the return sound with a duplicate fist sound"
+);
+assert.ok(
+    html.includes("get lastGestureSoundName()") &&
+        html.includes("get gestureSoundCount()"),
+    "manual browser QA must expose gesture sound activity without relying on microphone output"
+);
 assert.equal(
     numericConstant("MINI_MEDIA_COUNT"),
     12,
