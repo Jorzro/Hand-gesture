@@ -12,6 +12,12 @@ const embeddedMediaPath = path.join(
     "card-images",
     "embedded-media.js"
 );
+const photoMusicPath = path.join(
+    __dirname,
+    "..",
+    "music",
+    "雪夜温存_no-watermark.mp3"
+);
 
 function numericConstant(name) {
     const match = html.match(new RegExp(`const ${name} = ([0-9.]+);`));
@@ -127,6 +133,45 @@ assert.ok(
     html.includes("get lastGestureSoundName()") &&
         html.includes("get gestureSoundCount()"),
     "manual browser QA must expose gesture sound activity without relying on microphone output"
+);
+assert.ok(
+    fs.existsSync(photoMusicPath),
+    "photo background music file must exist in music/雪夜温存_no-watermark.mp3"
+);
+assert.match(
+    html,
+    /const PHOTO_MUSIC_URL = "\.\/music\/雪夜温存_no-watermark\.mp3";/,
+    "photo carousel music must point to the requested local MP3"
+);
+assert.ok(
+    html.includes("let photoMusicElement = null;") &&
+        html.includes("let photoMusicAutoplayBlocked = false;"),
+    "photo background music must keep explicit playback and blocked state"
+);
+assert.match(
+    html,
+    /function getPhotoMusicElement\(\)[\s\S]*?PHOTO_MUSIC_URL[\s\S]*?loop = true[\s\S]*?function playPhotoMusic\(\)[\s\S]*?play\(\)/,
+    "photo background music must loop and play during photos"
+);
+assert.match(
+    html,
+    /function stopPhotoMusic\([\s\S]*?pause\(\)[\s\S]*?currentTime = 0/,
+    "photo background music must pause and reset when leaving photos"
+);
+assert.match(
+    html,
+    /function showSelectedPhoto\(selected\)[\s\S]*?playPhotoMusic\(\)/,
+    "showing a still photo must start the requested music"
+);
+assert.match(
+    html,
+    /function showSelectedVideo\(selected\)[\s\S]*?stopPhotoMusic\(true\)/,
+    "showing a video must stop photo background music so video audio remains clear"
+);
+assert.match(
+    html,
+    /function releaseCrystalMediaExtraction\([\s\S]*?stopPhotoMusic\(true\)/,
+    "double-fist exit must stop photo background music"
 );
 assert.equal(
     numericConstant("MINI_MEDIA_COUNT"),

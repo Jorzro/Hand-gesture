@@ -492,6 +492,7 @@
         const MINI_MEDIA_COUNT = 12;
         const IMAGE_AUTOPLAY_DURATION_MS = 3000;
         const SHAPE_TRANSITION_DURATION = 1.68;
+        const PHOTO_MUSIC_URL = "./music/雪夜温存_no-watermark.mp3";
         const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".webp", ".JPG", ".JPEG", ".WEBP"];
         const VIDEO_EXTENSIONS = [".mp4", ".MP4"];
         const MEDIA_EXTENSIONS = [...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS];
@@ -845,6 +846,8 @@
         let selectedVideoElement = null;
         let selectedVideoRequestId = 0;
         let selectedMediaItem = null;
+        let photoMusicElement = null;
+        let photoMusicAutoplayBlocked = false;
         let selectedMiniMesh = null;
         let miniMediaVisibility = 0;
         let clock = new THREE.Clock();
@@ -2251,10 +2254,57 @@
             dom.selectedVideo.load();
         }
 
+        function getPhotoMusicElement() {
+            if (!photoMusicElement) {
+                photoMusicElement = new Audio(buildMediaUrl(PHOTO_MUSIC_URL));
+                photoMusicElement.loop = true;
+                photoMusicElement.preload = "auto";
+                photoMusicElement.volume = 0.54;
+            }
+            photoMusicElement.muted = !soundEnabled;
+            return photoMusicElement;
+        }
+
+        function playPhotoMusic() {
+            if (!soundEnabled || selectedMediaItem?.type !== "image") return false;
+            const music = getPhotoMusicElement();
+            music.loop = true;
+            music.muted = false;
+            music.volume = 0.54;
+            photoMusicAutoplayBlocked = false;
+            music.play().then(() => {
+                photoMusicAutoplayBlocked = false;
+                updateSoundButton();
+            }).catch(() => {
+                if (selectedMediaItem?.type !== "image") return;
+                photoMusicAutoplayBlocked = true;
+                updateSoundButton();
+                showToast("浏览器阻止了图片背景音乐，请点击声音开关");
+            });
+            updateSoundButton();
+            return true;
+        }
+
+        function stopPhotoMusic(resetTime = false) {
+            if (!photoMusicElement) return;
+            photoMusicElement.pause();
+            if (resetTime) {
+                try {
+                    photoMusicElement.currentTime = 0;
+                } catch (error) {
+                    console.warn("Photo music reset failed", error);
+                }
+            }
+            photoMusicAutoplayBlocked = false;
+            updateSoundButton();
+        }
+
         function updateSoundButton() {
+            const isPhotoMusicClear = !photoMusicElement || !photoMusicAutoplayBlocked;
             const isActuallyAudible =
                 soundEnabled &&
                 !soundAutoplayBlocked &&
+                isPhotoMusicClear &&
                 (!selectedVideoElement || !selectedVideoElement.muted);
             dom.soundToggleBtn.textContent = isActuallyAudible ? "声音开" : "开启声音";
             dom.soundToggleBtn.setAttribute("aria-pressed", String(isActuallyAudible));
@@ -2263,6 +2313,12 @@
         function setSoundEnabled(enabled, resumePlayback = true) {
             soundEnabled = enabled;
             soundAutoplayBlocked = false;
+            photoMusicAutoplayBlocked = false;
+            if (!soundEnabled) {
+                stopPhotoMusic(false);
+            } else if (selectedMediaItem?.type === "image") {
+                playPhotoMusic();
+            }
             if (selectedVideoElement) {
                 const videoElement = selectedVideoElement;
                 const requestId = selectedVideoRequestId;
@@ -2377,6 +2433,7 @@
 
         function showSelectedVideo(selected) {
             stopSelectedVideo();
+            stopPhotoMusic(true);
             const requestId = selectedVideoRequestId;
             dom.selectedImage.classList.remove("is-active");
             dom.selectedImage.removeAttribute("src");
@@ -2464,6 +2521,7 @@
             if (dom.selectedImage.complete && dom.selectedImage.naturalWidth > 0) {
                 revealImage();
             }
+            playPhotoMusic();
         }
 
         function displaySelectedMedia(selected, screenX, screenY) {
@@ -2705,6 +2763,11 @@
                 activeMediaFaceIndex = incomingIndex;
                 document.body.dataset.selectedMediaUrl = selected.url;
                 foregroundTransitionActive = false;
+                if (selected.type === "image") {
+                    playPhotoMusic();
+                } else {
+                    stopPhotoMusic(true);
+                }
                 playGestureSound("mediaNext");
                 scheduleAutomaticAdvance(selected, incomingIndex);
             }, 640);
@@ -2712,6 +2775,7 @@
         }
 
         function hideSelectedImage() {
+            stopPhotoMusic(true);
             imageTarget = 0;
         }
 
@@ -2838,6 +2902,7 @@
         function releaseCrystalMediaExtraction() {
             if (dualMediaPhase !== "displaying") return false;
             playGestureSound("return");
+            stopPhotoMusic(true);
             clearAutomaticAdvance();
             dualPinchStableSince = 0;
             dualReleaseStableSince = 0;
@@ -4012,6 +4077,7 @@
                 selectedImageIndex = -1;
                 selectedMediaItem = null;
                 document.body.dataset.selectedMediaUrl = "";
+                stopPhotoMusic(true);
                 stopSelectedVideo();
                 completeCrystalMediaReturn();
                 return;
@@ -4174,6 +4240,8 @@
                 document.body.dataset.videoTime = selectedVideoElement ? selectedVideoElement.currentTime.toFixed(3) : "0";
                 document.body.dataset.videoPaused = selectedVideoElement ? String(selectedVideoElement.paused) : "true";
                 document.body.dataset.videoMuted = selectedVideoElement ? String(selectedVideoElement.muted) : "true";
+                document.body.dataset.photoMusicPaused = photoMusicElement ? String(photoMusicElement.paused) : "true";
+                document.body.dataset.photoMusicBlocked = String(photoMusicAutoplayBlocked);
                 document.body.dataset.audioBlocked = String(soundAutoplayBlocked);
                 document.body.dataset.nebulaRotation = nebulaSystem.rotation.z.toFixed(3);
                 document.body.dataset.gestureState = String(gestureState);
@@ -4375,6 +4443,11 @@
                 get selectedVideoPaused() { return selectedVideoElement ? selectedVideoElement.paused : true; },
                 get selectedVideoMuted() { return selectedVideoElement ? selectedVideoElement.muted : true; },
                 get soundAutoplayBlocked() { return soundAutoplayBlocked; },
+                get photoMusicPaused() { return photoMusicElement ? photoMusicElement.paused : true; },
+                get photoMusicTime() { return photoMusicElement ? photoMusicElement.currentTime : 0; },
+                get photoMusicMuted() { return photoMusicElement ? photoMusicElement.muted : true; },
+                get photoMusicAutoplayBlocked() { return photoMusicAutoplayBlocked; },
+                get photoMusicSrc() { return photoMusicElement ? photoMusicElement.currentSrc || photoMusicElement.src : ""; },
                 get lastGestureSoundName() { return lastGestureSoundName; },
                 get gestureSoundCount() { return gestureSoundCount; },
                 get dualHandComboActive() { return dualHandComboActive; },
@@ -4435,7 +4508,9 @@
                 simulateDoubleFist: () => releaseCrystalMediaExtraction(),
                 enableSound: () => {
                     setSoundEnabled(true);
-                    return selectedVideoElement ? !selectedVideoElement.muted : false;
+                    if (selectedVideoElement) return !selectedVideoElement.muted;
+                    if (photoMusicElement) return !photoMusicElement.muted;
+                    return soundEnabled;
                 }
             };
         });
